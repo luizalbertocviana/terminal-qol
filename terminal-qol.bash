@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # terminal-qol.bash — Quality-of-Life Shell Enhancements
-# Version: 1.0.0
+# Version: 1.1.0
 # Source from ~/.bashrc: [ -f "$HOME/.config/qol/terminal-qol.bash" ] && source "$HOME/.config/qol/terminal-qol.bash"
 # =============================================================================
 
@@ -16,7 +16,10 @@
 # (safe to re-source for function redefinition, but skip setup blocks)
 if [[ -z "${__QOL_LOADED:-}" ]]; then
     __QOL_LOADED=1
+    __QOL_FIRST_LOAD=1
     __QOL_LOAD_TIME_START="${EPOCHREALTIME:-0}"
+else
+    __QOL_FIRST_LOAD=0
 fi
 
 # Bash version check (require Bash 4+)
@@ -42,6 +45,8 @@ fi
 : "${QOL_ENABLE_FZF:=1}"         # fzf integrations
 : "${QOL_ENABLE_DIRENV:=1}"      # direnv integration
 : "${QOL_ENABLE_ZOXIDE:=1}"      # zoxide integration
+: "${QOL_ENABLE_GH:=1}"          # GitHub CLI helpers
+: "${QOL_ENABLE_TMUX:=1}"        # tmux helpers
 : "${QOL_PROMPT_STYLE:=minimal}" # Prompt style: minimal | powerline | emoji
 
 # Internal state
@@ -130,6 +135,38 @@ path_add_back() {
     fi
 }
 
+# path_rm: Remove one or more directories from PATH
+# Usage: path_rm ~/.local/bin /tmp/bin
+path_rm() {
+    local remove dir new_path=""
+    IFS=':' read -r -a __qol_path_parts <<< "$PATH"
+    for dir in "${__qol_path_parts[@]}"; do
+        local keep=1
+        for remove in "$@"; do
+            remove="$(realpath -m "$remove" 2>/dev/null || echo "$remove")"
+            [[ "$dir" == "$remove" ]] && keep=0 && break
+        done
+        (( keep )) && new_path="${new_path:+${new_path}:}${dir}"
+    done
+    unset __qol_path_parts
+    export PATH="$new_path"
+}
+
+# path_dedupe: Remove duplicate PATH entries while preserving first occurrence
+path_dedupe() {
+    local dir new_path="" seen=":"
+    IFS=':' read -r -a __qol_path_parts <<< "$PATH"
+    for dir in "${__qol_path_parts[@]}"; do
+        [[ -z "$dir" ]] && continue
+        if [[ "$seen" != *":$dir:"* ]]; then
+            seen+="$dir:"
+            new_path="${new_path:+${new_path}:}${dir}"
+        fi
+    done
+    unset __qol_path_parts
+    export PATH="$new_path"
+}
+
 # =============================================================================
 # SECTION 6: ALIASES — Shell UX
 # =============================================================================
@@ -149,7 +186,7 @@ elif has_cmd exa; then
     __qol_feature "ls" "exa"
 else
     # Detect whether ls supports --color
-    if ls --color=auto &>/dev/null 2>&1; then
+    if command ls --color=auto &>/dev/null 2>&1; then
         alias ls='ls --color=auto --group-directories-first 2>/dev/null || ls --color=auto'
     else
         alias ls='ls -G'  # macOS
@@ -268,47 +305,56 @@ up() {
 }
 
 # extract: Universal archive extraction
-# Usage: extract archive.tar.gz
+# Usage: extract archive.tar.gz [archive2.zip ...]
 extract() {
-    if [[ -z "$1" ]]; then
-        echo "Usage: extract <archive>" >&2
-        return 1
-    fi
-    if [[ ! -f "$1" ]]; then
-        echo "[qol] File not found: $1" >&2
+    if [[ "$#" -eq 0 ]]; then
+        echo "Usage: extract <archive> [archive2 ...]" >&2
         return 1
     fi
 
-    local file="$1"
-    case "$file" in
-        *.tar.bz2)   tar xjf "$file"    ;;
-        *.tar.gz)    tar xzf "$file"    ;;
-        *.tar.xz)    tar xJf "$file"    ;;
-        *.tar.zst)   tar --zstd -xf "$file" 2>/dev/null || { require_cmd zstd "tar.zst extraction" && zstd -d "$file" -o "${file%.zst}" && tar xf "${file%.zst}"; } ;;
-        *.tar)       tar xf "$file"     ;;
-        *.tbz2)      tar xjf "$file"    ;;
-        *.tgz)       tar xzf "$file"    ;;
-        *.bz2)       bunzip2 "$file"    ;;
-        *.gz)        gunzip "$file"     ;;
-        *.xz)        unxz "$file"       ;;
-        *.zst)       require_cmd zstd "zstd decompression" && zstd -d "$file" ;;
-        *.zip)       unzip "$file"      ;;
-        *.Z)         uncompress "$file" ;;
-        *.7z)        require_cmd 7z "7-zip extraction" && 7z x "$file" ;;
-        *.rar)       require_cmd unrar "rar extraction" && unrar x "$file" ;;
-        *.deb)       require_cmd dpkg "deb extraction" && dpkg -x "$file" "${file%.deb}" ;;
-        *)
-            echo "[qol] Unknown archive format: $file" >&2
-            return 1
-            ;;
-    esac
+    local file status=0
+    for file in "$@"; do
+        if [[ ! -f "$file" ]]; then
+            echo "[qol] File not found: $file" >&2
+            status=1
+            continue
+        fi
+
+        case "$file" in
+            *.tar.bz2)   tar xjf "$file"    ;;
+            *.tar.gz)    tar xzf "$file"    ;;
+            *.tar.xz)    tar xJf "$file"    ;;
+            *.tar.zst)   tar --zstd -xf "$file" 2>/dev/null || { require_cmd zstd "tar.zst extraction" && zstd -d "$file" -o "${file%.zst}" && tar xf "${file%.zst}"; } ;;
+            *.tar)       tar xf "$file"     ;;
+            *.tbz2)      tar xjf "$file"    ;;
+            *.tgz)       tar xzf "$file"    ;;
+            *.bz2)       bunzip2 "$file"    ;;
+            *.gz)        gunzip "$file"     ;;
+            *.xz)        unxz "$file"       ;;
+            *.zst)       require_cmd zstd "zstd decompression" && zstd -d "$file" ;;
+            *.zip)       unzip "$file"      ;;
+            *.Z)         uncompress "$file" ;;
+            *.7z)        require_cmd 7z "7-zip extraction" && 7z x "$file" ;;
+            *.rar)       require_cmd unrar "rar extraction" && unrar x "$file" ;;
+            *.deb)       require_cmd dpkg "deb extraction" && dpkg -x "$file" "${file%.deb}" ;;
+            *)
+                echo "[qol] Unknown archive format: $file" >&2
+                status=1
+                ;;
+        esac || status=1
+    done
+    return "$status"
 }
 
 # serve: Start a local HTTP server in the current directory
-# Usage: serve [port]
+# Usage: serve [port] [host]
 serve() {
     local port="${1:-8080}"
-    local host="localhost"
+    local host="${2:-localhost}"
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+        echo "Usage: serve [port] [host]" >&2
+        return 1
+    fi
     echo "[qol] Serving $(pwd) at http://${host}:${port} — press Ctrl+C to stop"
 
     if has_cmd python3; then
@@ -349,6 +395,10 @@ port_kill() {
     fi
     local port="$1"
     local pids
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+        echo "Usage: port_kill <port>" >&2
+        return 1
+    fi
 
     if has_cmd lsof; then
         pids=$(lsof -ti "TCP:${port}" -sTCP:LISTEN 2>/dev/null)
@@ -367,6 +417,13 @@ port_kill() {
     echo "[qol] Killing PIDs: $pids (port ${port})"
     # xargs -r to avoid killing nothing
     echo "$pids" | xargs -r kill -9
+}
+
+# psg: Search running processes by command line
+# Usage: psg postgres
+psg() {
+    [[ -z "$1" ]] && { echo "Usage: psg <pattern>" >&2; return 1; }
+    ps aux | command grep -i -- "$1" | command grep -v '[g]rep'
 }
 
 # envload / dotenv: Load .env file into the current shell, safely
@@ -408,6 +465,71 @@ envload() {
 }
 alias dotenv='envload'
 
+# clipcopy / clippaste: Cross-platform clipboard helpers
+clipcopy() {
+    if has_cmd pbcopy; then
+        pbcopy
+    elif has_cmd wl-copy; then
+        wl-copy
+    elif has_cmd xclip; then
+        xclip -selection clipboard
+    elif has_cmd xsel; then
+        xsel --clipboard --input
+    elif has_cmd clip.exe; then
+        clip.exe
+    else
+        echo "[qol] No clipboard tool found (pbcopy, wl-copy, xclip, xsel, clip.exe)." >&2
+        return 1
+    fi
+}
+
+clippaste() {
+    if has_cmd pbpaste; then
+        pbpaste
+    elif has_cmd wl-paste; then
+        wl-paste
+    elif has_cmd xclip; then
+        xclip -selection clipboard -o
+    elif has_cmd xsel; then
+        xsel --clipboard --output
+    elif has_cmd powershell.exe; then
+        powershell.exe -NoProfile -Command Get-Clipboard
+    else
+        echo "[qol] No clipboard paste tool found (pbpaste, wl-paste, xclip, xsel, powershell.exe)." >&2
+        return 1
+    fi
+}
+
+# backup: Copy files/directories with a timestamped .bak suffix
+backup() {
+    [[ "$#" -eq 0 ]] && { echo "Usage: backup <path> [path2 ...]" >&2; return 1; }
+
+    local src dest status=0 stamp
+    stamp="$(date '+%Y%m%d-%H%M%S')"
+    for src in "$@"; do
+        if [[ ! -e "$src" ]]; then
+            echo "[qol] Not found: $src" >&2
+            status=1
+            continue
+        fi
+        dest="${src}.bak.${stamp}"
+        command cp -a "$src" "$dest" && echo "[qol] Backed up $src -> $dest" || status=1
+    done
+    return "$status"
+}
+
+# sha256: Print SHA-256 checksums using the available platform tool
+sha256() {
+    if has_cmd sha256sum; then
+        sha256sum "$@"
+    elif has_cmd shasum; then
+        shasum -a 256 "$@"
+    else
+        echo "[qol] sha256 requires sha256sum or shasum." >&2
+        return 1
+    fi
+}
+
 # =============================================================================
 # SECTION 8: JSON HELPERS
 # =============================================================================
@@ -444,13 +566,15 @@ fi
 # A thin wrapper that prefers httpie > curl > wget
 # Usage: GET <url>
 GET() {
-    require_cmd curl "HTTP GET" || require_cmd wget "HTTP GET" || { echo "Install curl or wget" >&2; return 1; }
     if has_cmd http; then
         http GET "$@"
     elif has_cmd curl; then
         curl -sSL "$@"
-    else
+    elif has_cmd wget; then
         wget -qO- "$@"
+    else
+        echo "[qol] GET requires httpie, curl, or wget." >&2
+        return 1
     fi
 }
 
@@ -460,7 +584,7 @@ POST() {
     elif has_cmd curl; then
         curl -sSL -X POST "$@"
     else
-        echo "[qol] POST requires curl or httpie." >&2; return 1
+        echo "[qol] POST requires httpie or curl." >&2; return 1
     fi
 }
 
@@ -486,6 +610,10 @@ if [[ "${QOL_ENABLE_GIT}" == "1" ]] && has_cmd git; then
     alias gp='git push'
     alias gpf='git push --force-with-lease'
     alias gl='git pull --rebase'
+    alias gb='git branch'
+    alias gba='git branch -a'
+    alias gsw='git switch'
+    alias gswc='git switch -c'
     alias gst='git stash'
     alias gstp='git stash pop'
     alias glog='git log --oneline --graph --decorate --all'
@@ -534,8 +662,50 @@ if [[ "${QOL_ENABLE_GIT}" == "1" ]] && has_cmd git; then
     grestore() {
         git restore --staged .
     }
+
+    # grecent: Show recently updated local branches
+    grecent() {
+        git for-each-ref --sort=-committerdate --count="${1:-15}" \
+            --format='%(committerdate:relative)%09%(refname:short)%09%(subject)' refs/heads/
+    }
+
+    # gignored: Explain why a path is ignored
+    gignored() {
+        [[ -z "$1" ]] && { echo "Usage: gignored <path>" >&2; return 1; }
+        git check-ignore -v "$@"
+    }
+
+    # gwip: Stash all tracked/untracked changes with a timestamped message
+    gwip() {
+        git stash push -u -m "WIP: $(date '+%Y-%m-%d %H:%M')"
+    }
 else
     [[ "${QOL_ENABLE_GIT}" == "1" ]] && __qol_warn "git" "Install 'git' to enable git helpers."
+fi
+
+# =============================================================================
+# SECTION 10B: GITHUB CLI HELPERS
+# =============================================================================
+
+if [[ "${QOL_ENABLE_GH}" == "1" ]] && has_cmd gh; then
+    __qol_feature "gh" "enabled"
+
+    alias ghpr='gh pr status'
+    alias ghprs='gh pr list'
+    alias ghci='gh run list --limit 10'
+
+    # ghopen: Open the current repo or a specific path in GitHub
+    ghopen() {
+        gh repo view --web "$@"
+    }
+
+    # ghmine: Show issues and PRs assigned to the current user
+    ghmine() {
+        gh issue list --assignee @me
+        gh pr list --author @me
+    }
+else
+    [[ "${QOL_ENABLE_GH}" == "1" ]] && __qol_warn "gh" "Install 'gh' to enable GitHub CLI helpers."
 fi
 
 # =============================================================================
@@ -546,10 +716,21 @@ if [[ "${QOL_ENABLE_DOCKER}" == "1" ]] && has_cmd docker; then
     __qol_feature "docker" "enabled"
 
     alias dk='docker'
-    alias dkc='docker compose'
     alias dkps='docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"'
     alias dkpsa='docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"'
     alias dki='docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"'
+
+    # dkc: docker compose wrapper with docker-compose fallback
+    dkc() {
+        if docker compose version &>/dev/null; then
+            docker compose "$@"
+        elif has_cmd docker-compose; then
+            docker-compose "$@"
+        else
+            echo "[qol] Docker Compose not found (docker compose or docker-compose)." >&2
+            return 1
+        fi
+    }
 
     # dksh: Shell into a running container (defaults to sh if bash not available)
     dksh() {
@@ -576,6 +757,13 @@ if [[ "${QOL_ENABLE_DOCKER}" == "1" ]] && has_cmd docker; then
         local container="${1:-}"
         [[ -z "$container" ]] && { echo "Usage: dklogs <container>" >&2; return 1; }
         docker logs -f --tail=100 "$container"
+    }
+
+    # dkclean_all: Prompt, then prune containers/images/volumes/build cache
+    dkclean_all() {
+        read -r -p "[qol] Prune all unused Docker resources, including volumes? [y/N] " answer
+        [[ "$answer" =~ ^[Yy]$ ]] || return 0
+        docker system prune -af --volumes
     }
 else
     [[ "${QOL_ENABLE_DOCKER}" == "1" ]] && __qol_warn "docker" "Install 'docker' to enable Docker helpers."
@@ -621,7 +809,7 @@ if [[ "${QOL_ENABLE_K8S}" == "1" ]] && has_cmd kubectl; then
     }
 
     # Shell completion if available
-    if kubectl completion bash &>/dev/null; then
+    if [[ "${__QOL_FIRST_LOAD}" == "1" ]] && kubectl completion bash &>/dev/null; then
         # shellcheck disable=SC1090
         source <(kubectl completion bash)
         alias k='kubectl'
@@ -632,7 +820,36 @@ else
 fi
 
 # =============================================================================
-# SECTION 13: LANGUAGE/RUNTIME HELPERS
+# SECTION 13: TMUX HELPERS
+# =============================================================================
+
+if [[ "${QOL_ENABLE_TMUX}" == "1" ]] && has_cmd tmux; then
+    __qol_feature "tmux" "enabled"
+
+    alias ta='tmux attach -t'
+    alias tls='tmux list-sessions'
+    alias tn='tmux new -s'
+
+    # t: Attach to an existing tmux session or create one
+    # Usage: t [session]
+    t() {
+        local session="${1:-main}"
+        tmux attach -t "$session" 2>/dev/null || tmux new -s "$session"
+    }
+
+    # tk: Kill a tmux session after confirmation
+    tk() {
+        local session="${1:-}"
+        [[ -z "$session" ]] && { echo "Usage: tk <session>" >&2; return 1; }
+        read -r -p "[qol] Kill tmux session '${session}'? [y/N] " answer
+        [[ "$answer" =~ ^[Yy]$ ]] && tmux kill-session -t "$session"
+    }
+else
+    [[ "${QOL_ENABLE_TMUX}" == "1" ]] && __qol_warn "tmux" "Install 'tmux' to enable tmux helpers."
+fi
+
+# =============================================================================
+# SECTION 14: LANGUAGE/RUNTIME HELPERS
 # =============================================================================
 
 # --- Node / npm ---
@@ -678,7 +895,7 @@ if [[ "${QOL_ENABLE_PYTHON}" == "1" ]] && (has_cmd python3 || has_cmd python); t
             python3 -m venv "$name" || { echo "[qol] Failed to create venv." >&2; return 1; }
             echo "[qol] Created virtualenv: $name"
         fi
-        # shellcheck disable=SC1090
+        # shellcheck disable=SC1091
         source "${name}/bin/activate"
         echo "[qol] Activated: $name"
     }
@@ -701,18 +918,18 @@ if [[ "${QOL_ENABLE_RUST}" == "1" ]] && has_cmd cargo; then
 fi
 
 # =============================================================================
-# SECTION 14: FZF INTEGRATIONS
+# SECTION 15: FZF INTEGRATIONS
 # =============================================================================
 
 if [[ "${QOL_ENABLE_FZF}" == "1" ]] && has_cmd fzf; then
     __qol_feature "fzf" "enabled"
 
     # Load fzf shell integration if available
-    if [[ -f ~/.fzf.bash ]]; then
+    if [[ "${__QOL_FIRST_LOAD}" == "1" ]] && [[ -f ~/.fzf.bash ]]; then
         # shellcheck disable=SC1090
         source ~/.fzf.bash
-    elif [[ -f /usr/share/doc/fzf/examples/key-bindings.bash ]]; then
-        # shellcheck disable=SC1090
+    elif [[ "${__QOL_FIRST_LOAD}" == "1" ]] && [[ -f /usr/share/doc/fzf/examples/key-bindings.bash ]]; then
+        # shellcheck disable=SC1091
         source /usr/share/doc/fzf/examples/key-bindings.bash
     fi
 
@@ -762,13 +979,13 @@ else
 fi
 
 # =============================================================================
-# SECTION 15: ZOXIDE INTEGRATION
+# SECTION 16: ZOXIDE INTEGRATION
 # =============================================================================
 
 if [[ "${QOL_ENABLE_ZOXIDE}" == "1" ]] && has_cmd zoxide; then
     __qol_feature "zoxide" "enabled"
     # shellcheck disable=SC1090
-    eval "$(zoxide init bash)"
+    [[ "${__QOL_FIRST_LOAD}" == "1" ]] && eval "$(zoxide init bash)"
     # z is set by zoxide; add zi for interactive selection
     if has_cmd fzf; then
         alias zi='z -i'
@@ -778,26 +995,26 @@ else
 fi
 
 # =============================================================================
-# SECTION 16: DIRENV INTEGRATION
+# SECTION 17: DIRENV INTEGRATION
 # =============================================================================
 
 if [[ "${QOL_ENABLE_DIRENV}" == "1" ]] && has_cmd direnv; then
     __qol_feature "direnv" "enabled"
     # shellcheck disable=SC1090
-    eval "$(direnv hook bash)"
+    [[ "${__QOL_FIRST_LOAD}" == "1" ]] && eval "$(direnv hook bash)"
 else
     __qol_warn "direnv" "Install 'direnv' for automatic per-directory env management."
 fi
 
 # =============================================================================
-# SECTION 17: PROMPT SETUP
+# SECTION 18: PROMPT SETUP
 # =============================================================================
 
 if [[ "${QOL_ENABLE_PROMPT}" == "1" ]]; then
     if has_cmd starship; then
         __qol_feature "prompt" "starship"
         # shellcheck disable=SC1090
-        eval "$(starship init bash)"
+        [[ "${__QOL_FIRST_LOAD}" == "1" ]] && eval "$(starship init bash)"
     else
         __qol_warn "starship" "Install 'starship' for a beautiful cross-shell prompt."
         __qol_feature "prompt" "builtin"
@@ -808,13 +1025,13 @@ if [[ "${QOL_ENABLE_PROMPT}" == "1" ]]; then
             local branch
             branch=$(git symbolic-ref --short HEAD 2>/dev/null) || \
             branch=$(git rev-parse --short HEAD 2>/dev/null)
-            [[ -n "$branch" ]] && echo " (\001\033[33m\002${branch}\001\033[0m\002)"
+            [[ -n "$branch" ]] && printf ' (\001\033[33m\002%s\001\033[0m\002)\n' "$branch"
         }
 
         __qol_prompt_exit() {
             local exit_code=$?
             if (( exit_code != 0 )); then
-                echo "\001\033[31m\002✖ ${exit_code}\001\033[0m\002 "
+                printf '\001\033[31m\002✖ %s\001\033[0m\002 \n' "$exit_code"
             fi
         }
 
@@ -845,7 +1062,7 @@ if [[ "${QOL_ENABLE_PROMPT}" == "1" ]]; then
 fi
 
 # =============================================================================
-# SECTION 18: SHELL OPTIONS & HISTORY
+# SECTION 19: SHELL OPTIONS & HISTORY
 # =============================================================================
 
 # Better history
@@ -887,12 +1104,12 @@ if [[ -z "${EDITOR:-}" ]]; then
 fi
 
 # =============================================================================
-# SECTION 19: DOCTOR & HELP
+# SECTION 20: DOCTOR & HELP
 # =============================================================================
 
 # qol_doctor: Health report for the QOL environment
 qol_doctor() {
-    local GREEN='\033[32m' RED='\033[31m' YELLOW='\033[33m' CYAN='\033[36m' RESET='\033[0m' BOLD='\033[1m'
+    local GREEN='\033[32m' RED='\033[31m' CYAN='\033[36m' RESET='\033[0m' BOLD='\033[1m'
 
     echo -e "${BOLD}╔══════════════════════════════════════╗${RESET}"
     echo -e "${BOLD}║       terminal-qol :: Doctor         ║${RESET}"
@@ -944,7 +1161,7 @@ qol_doctor() {
         "nvim:Neovim editor"
         "tmux:Terminal multiplexer"
         "gh:GitHub CLI"
-        "httpie:HTTP client"
+        "http:HTTPie client"
     )
 
     for entry in "${tools[@]}"; do
@@ -965,6 +1182,7 @@ qol_doctor() {
     echo "  QOL_ENABLE_GIT=${QOL_ENABLE_GIT}  QOL_ENABLE_DOCKER=${QOL_ENABLE_DOCKER}  QOL_ENABLE_K8S=${QOL_ENABLE_K8S}"
     echo "  QOL_ENABLE_PROMPT=${QOL_ENABLE_PROMPT}  QOL_SAFE_ALIASES=${QOL_SAFE_ALIASES}  QOL_WARN_MISSING=${QOL_WARN_MISSING}"
     echo "  QOL_ENABLE_FZF=${QOL_ENABLE_FZF}  QOL_ENABLE_ZOXIDE=${QOL_ENABLE_ZOXIDE}  QOL_ENABLE_DIRENV=${QOL_ENABLE_DIRENV}"
+    echo "  QOL_ENABLE_GH=${QOL_ENABLE_GH}  QOL_ENABLE_TMUX=${QOL_ENABLE_TMUX}"
 }
 
 # qol_help: List all user-facing functions and aliases
@@ -989,12 +1207,17 @@ qol_help() {
     echo "  path                Print PATH one entry per line"
     echo "  path_add <dir>      Safely prepend dir to PATH (no duplicates)"
     echo "  path_add_back <dir> Safely append dir to PATH"
+    echo "  path_rm <dir>       Remove dir from PATH"
+    echo "  path_dedupe         Remove duplicate PATH entries"
+    echo "  backup <path>       Create timestamped .bak copy"
+    echo "  sha256 <file>       Print SHA-256 checksum"
     echo
 
     echo -e "${CYAN}Network & Servers:${RESET}"
     echo "  serve [port]        Start HTTP server in current dir (default: 8080)"
     echo "  ports               List all listening ports"
     echo "  port_kill <port>    Kill process listening on port"
+    echo "  psg <pattern>       Search running processes"
     echo "  GET <url>           HTTP GET (uses httpie > curl > wget)"
     echo "  POST <url>          HTTP POST"
     echo
@@ -1002,6 +1225,8 @@ qol_help() {
     echo -e "${CYAN}Environment:${RESET}"
     echo "  envload [file]      Load .env file safely (default: .env)"
     echo "  dotenv [file]       Alias for envload"
+    echo "  clipcopy            Copy stdin to system clipboard"
+    echo "  clippaste           Print system clipboard contents"
     echo "  reload_shell        Reload ~/.bashrc"
     echo "  please              Re-run last command with sudo"
     echo
@@ -1017,20 +1242,33 @@ qol_help() {
     echo "  ga / gaa            git add / git add -A"
     echo "  gc / gcm / gca      git commit / -m / --amend"
     echo "  gco / gcob          git checkout / -b"
+    echo "  gsw / gswc          git switch / switch -c"
     echo "  gd / gds            git diff / --staged"
     echo "  glog                git log --oneline --graph --decorate --all"
     echo "  groot               Jump to repo root"
     echo "  gundo               Undo last commit (keep changes staged)"
     echo "  gclean_merged       Delete merged local branches"
     echo "  gbranch             Fuzzy-pick branch (fzf)"
+    echo "  grecent             Show recently updated branches"
+    echo "  gignored <path>     Explain why a path is ignored"
+    echo "  gwip                Stash tracked/untracked changes as WIP"
     echo "  gsave               Quick WIP commit with timestamp"
+    echo
+
+    echo -e "${CYAN}GitHub CLI (QOL_ENABLE_GH=1):${RESET}"
+    echo "  ghpr / ghprs        PR status / list PRs"
+    echo "  ghci                List recent workflow runs"
+    echo "  ghopen              Open current repo in GitHub"
+    echo "  ghmine              Show assigned issues and authored PRs"
     echo
 
     echo -e "${CYAN}Docker (QOL_ENABLE_DOCKER=1):${RESET}"
     echo "  dkps / dkpsa        List running / all containers"
     echo "  dki                 List images"
+    echo "  dkc                 docker compose wrapper"
     echo "  dksh [container]    Shell into container"
     echo "  dkclean             Prune unused Docker resources"
+    echo "  dkclean_all         Prune Docker resources including volumes"
     echo "  dklogs <container>  Tail container logs"
     echo
 
@@ -1040,6 +1278,12 @@ qol_help() {
     echo "  kl / ke             logs / exec"
     echo "  kubens              Switch namespace (fzf)"
     echo "  kubectx             Switch context (fzf)"
+    echo
+
+    echo -e "${CYAN}tmux (QOL_ENABLE_TMUX=1):${RESET}"
+    echo "  t [session]         Attach or create tmux session"
+    echo "  tls / tn / ta       list / new / attach sessions"
+    echo "  tk <session>        Kill a session after confirmation"
     echo
 
     echo -e "${CYAN}FZF Helpers (requires fzf):${RESET}"
@@ -1063,7 +1307,7 @@ qol_help() {
 }
 
 # =============================================================================
-# SECTION 20: LOAD TIME TRACKING
+# SECTION 21: LOAD TIME TRACKING
 # =============================================================================
 
 if [[ -n "${__QOL_LOAD_TIME_START:-}" ]] && [[ -n "${EPOCHREALTIME:-}" ]]; then
