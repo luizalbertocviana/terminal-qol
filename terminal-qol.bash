@@ -331,7 +331,7 @@ ports() {
     if has_cmd ss; then
         ss -tulnp
     elif has_cmd netstat; then
-        netstat -tulnp 2>/dev/null || netstat -an | grep LISTEN
+        netstat -tulnp 2>/dev/null || netstat -an | command grep LISTEN
     elif has_cmd lsof; then
         lsof -iTCP -sTCP:LISTEN -n -P
     else
@@ -511,7 +511,7 @@ if [[ "${QOL_ENABLE_GIT}" == "1" ]] && has_cmd git; then
         local current
         current=$(git branch --show-current)
         echo "[qol] Cleaning branches merged into: ${current}"
-        git branch --merged | grep -v "^\*" | grep -v "^\s*${current}$" | grep -v "^\s*\(main\|master\|develop\|dev\)$" | xargs -r git branch -d
+        git branch --merged | command grep -v "^\*" | command grep -v "^\s*${current}$" | command grep -v "^\s*\(main\|master\|develop\|dev\)$" | xargs -r git branch -d
     }
 
     # gbranch: Fuzzy-pick a branch (uses fzf if available)
@@ -952,7 +952,7 @@ qol_doctor() {
         local desc="${entry#*:}"
         if has_cmd "$cmd"; then
             local ver
-            ver=$("$cmd" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+            ver=$("$cmd" --version 2>/dev/null | head -1 | command grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
             printf "  ${GREEN}✔${RESET} %-14s %-28s %s\n" "$cmd" "$desc" "${ver:+(v${ver})}"
         else
             printf "  ${RED}✘${RESET} %-14s %s\n" "$cmd" "$desc"
