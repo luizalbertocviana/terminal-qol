@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # terminal-qol.bash — Quality-of-Life Shell Enhancements
-# Version: 1.1.0
+# Version: 2.0.0
 # Source from ~/.bashrc: [ -f "$HOME/.config/qol/terminal-qol.bash" ] && source "$HOME/.config/qol/terminal-qol.bash"
 # =============================================================================
 
@@ -49,17 +49,35 @@ fi
 : "${QOL_ENABLE_TMUX:=1}"        # tmux helpers
 : "${QOL_ENABLE_PODMAN:=1}"      # Podman helpers
 : "${QOL_PROMPT_STYLE:=minimal}" # Prompt style: minimal | powerline | emoji
+: "${QOL_STRICT_ALIASES:=0}"    # 0=replace common cmds (grep/find/cat); 1=only add new aliases
+: "${QOL_ENABLE_COMPLETIONS:=1}" # Load shell completions (kubectl, etc.) — may slow startup
+: "${QOL_ENABLE_HISTORY:=1}"    # Apply history tuning (HISTSIZE, HISTCONTROL, etc.)
+: "${QOL_QUIET:=0}"             # Suppress [qol] info messages at load time
+
+# Version
+QOL_VERSION="2.0.0"
 
 # Internal state
 declare -A __QOL_WARNED=()       # Tracks which warnings have been shown
 declare -A __QOL_FEATURES=()     # Tracks which features are active
 
 # =============================================================================
+# SECTION 2B: OS DETECTION
+# =============================================================================
+
+__QOL_OS="$(uname -s)"
+
+qol_is_macos() { [[ "$__QOL_OS" == "Darwin" ]]; }
+qol_is_linux() { [[ "$__QOL_OS" == "Linux" ]]; }
+qol_is_wsl()   { command grep -qi microsoft /proc/version 2>/dev/null; }
+
+# =============================================================================
 # SECTION 3: LOGGING HELPERS
 # =============================================================================
 
-# __qol_info: Print informational message (prefixed)
+# __qol_info: Print informational message (prefixed), respects QOL_QUIET
 __qol_info() {
+    [[ "${QOL_QUIET}" == "1" ]] && return 0
     echo "[qol] $*" >&2
 }
 
@@ -154,18 +172,35 @@ path_rm() {
 }
 
 # path_dedupe: Remove duplicate PATH entries while preserving first occurrence
+# Canonicalizes paths via realpath so /usr/bin and /usr//bin are treated the same.
 path_dedupe() {
-    local dir new_path="" seen=":"
+    local dir canon new_path="" seen=":"
     IFS=':' read -r -a __qol_path_parts <<< "$PATH"
     for dir in "${__qol_path_parts[@]}"; do
         [[ -z "$dir" ]] && continue
-        if [[ "$seen" != *":$dir:"* ]]; then
-            seen+="$dir:"
+        canon="$(realpath -m "$dir" 2>/dev/null || echo "$dir")"
+        if [[ "$seen" != *":$canon:"* ]]; then
+            seen+="$canon:"
             new_path="${new_path:+${new_path}:}${dir}"
         fi
     done
     unset __qol_path_parts
     export PATH="$new_path"
+}
+
+# path_contains: Check whether PATH contains a given directory
+# Usage: path_contains ~/bin
+path_contains() {
+    [[ -z "$1" ]] && { echo "Usage: path_contains <dir>" >&2; return 1; }
+    local dir
+    dir="$(realpath -m "$1" 2>/dev/null || echo "$1")"
+    if [[ ":$PATH:" == *":$dir:"* ]]; then
+        echo "[qol] PATH contains: $dir"
+        return 0
+    else
+        echo "[qol] PATH does not contain: $dir"
+        return 1
+    fi
 }
 
 # =============================================================================
@@ -186,12 +221,17 @@ elif has_cmd exa; then
     alias l='exa -lh --group-directories-first'
     __qol_feature "ls" "exa"
 else
-    # Detect whether ls supports --color
-    if command ls --color=auto &>/dev/null 2>&1; then
-        alias ls='ls --color=auto --group-directories-first 2>/dev/null || ls --color=auto'
-    else
-        alias ls='ls -G'  # macOS
-    fi
+    # Use a function to avoid broken alias fallback chains
+    qol_ls() {
+        if command ls --color=auto --group-directories-first . &>/dev/null 2>&1; then
+            command ls --color=auto --group-directories-first "$@"
+        elif command ls --color=auto . &>/dev/null 2>&1; then
+            command ls --color=auto "$@"
+        else
+            command ls -G "$@"  # macOS fallback
+        fi
+    }
+    alias ls='qol_ls'
     alias ll='ls -lAh'
     alias l='ls -lh'
     __qol_feature "ls" "coreutils"
@@ -199,22 +239,36 @@ fi
 
 # --- cat / paging ---
 if has_cmd bat; then
-    alias cat='bat --paging=never'
-    alias batl='bat --paging=always'
+    if [[ "${QOL_STRICT_ALIASES}" == "0" ]]; then
+        alias cat='bat --paging=never'
+    fi
+    alias batp='bat --paging=always'   # always available as 'batp'
     __qol_feature "cat" "bat"
 elif has_cmd batcat; then
     # Debian/Ubuntu package name
-    alias cat='batcat --paging=never'
-    alias batl='batcat --paging=always'
+    if [[ "${QOL_STRICT_ALIASES}" == "0" ]]; then
+        alias cat='batcat --paging=never'
+    fi
+    alias batp='batcat --paging=always'
     __qol_feature "cat" "batcat"
 else
     __qol_warn "bat" "Install 'bat' for syntax-highlighted file viewing (cat replacement)."
 fi
 
 # --- grep ---
+# Aliasing grep→rg breaks scripts that rely on grep-specific flags.
+# We keep 'grep' as grep (with color) and add 'rgp'/'rgrep' shortcuts.
+# Set QOL_STRICT_ALIASES=0 to override grep with rg (opt-in only).
 if has_cmd rg; then
-    alias grep='rg --color=auto'
+    alias rgp='rg --color=auto'
     alias rgrep='rg'
+    if [[ "${QOL_STRICT_ALIASES}" == "0" ]]; then
+        alias grep='rg --color=auto'
+    else
+        alias grep='grep --color=auto'
+        alias egrep='grep -E --color=auto'
+        alias fgrep='grep -F --color=auto'
+    fi
     __qol_feature "grep" "ripgrep"
 else
     alias grep='grep --color=auto'
@@ -232,16 +286,29 @@ elif has_cmd colordiff; then
     alias diff='colordiff'
     __qol_feature "diff" "colordiff"
 else
-    alias diff='diff --color=auto 2>/dev/null || diff'
+    # Use a function: alias fallback chains (cmd || cmd) don't work reliably
+    qol_diff() {
+        if command diff --color=auto /dev/null /dev/null &>/dev/null 2>&1; then
+            command diff --color=auto "$@"
+        else
+            command diff "$@"
+        fi
+    }
+    alias diff='qol_diff'
     __qol_feature "diff" "diff"
 fi
 
 # --- find ---
+# fd is not a drop-in replacement for find (different flags, no -exec compat).
+# We add 'ff' as a shortcut and only override 'find' when QOL_STRICT_ALIASES=0.
 if has_cmd fd; then
-    alias find='fd'
+    alias ff='fd'
+    if [[ "${QOL_STRICT_ALIASES}" == "0" ]]; then
+        alias find='fd'
+    fi
     __qol_feature "find" "fd"
 else
-    __qol_warn "fd" "Install 'fd' for a faster, friendlier 'find' alternative."
+    __qol_warn "fd" "Install 'fd' for a faster, friendlier 'find' alternative (available as 'ff')."
     __qol_feature "find" "find"
 fi
 
@@ -274,8 +341,21 @@ alias mkdir='mkdir -pv'
 alias wget='wget -c'  # resume downloads by default
 
 # sudo helpers
-alias please='sudo $(fc -ln -1)'
-alias sudo_last='sudo $(fc -ln -1)'
+# 'please' as a function is more reliable than alias with command substitution
+please() {
+    local cmd
+    cmd="$(fc -ln -1 | command sed 's/^[[:space:]]*//')"
+    if [[ -z "$cmd" ]]; then
+        echo "[qol] No previous command found." >&2
+        return 1
+    fi
+    echo "[qol] sudo $cmd"
+    sudo bash -c "$cmd"
+}
+alias sudo_last='please'
+
+# take: mkcd alias (common in zsh, nice to have here)
+alias take='mkcd'
 
 # =============================================================================
 # SECTION 7: CORE FUNCTIONS
@@ -287,7 +367,16 @@ mkcd() {
         echo "Usage: mkcd <directory>" >&2
         return 1
     fi
-    mkdir -p "$1" && cd "$1" || return 1
+    command mkdir -p "$1" && cd "$1" || return 1
+}
+
+# mktempd: Create a temporary directory and cd into it
+# Useful for throwaway workspaces
+mktempd() {
+    local dir
+    dir="$(mktemp -d "${TMPDIR:-/tmp}/qol.XXXXXX")" || return 1
+    cd "$dir" || return 1
+    echo "[qol] Created and entered: $dir"
 }
 
 # up: Move up N directories
@@ -388,19 +477,14 @@ ports() {
 }
 
 # port_kill: Kill whatever is listening on a given port
+# Sends SIGTERM first; offers SIGKILL only if the process survives.
 # Usage: port_kill 3000
 port_kill() {
-    if [[ -z "$1" ]]; then
+    if [[ -z "$1" || ! "$1" =~ ^[0-9]+$ ]]; then
         echo "Usage: port_kill <port>" >&2
         return 1
     fi
-    local port="$1"
-    local pids
-    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
-        echo "Usage: port_kill <port>" >&2
-        return 1
-    fi
-
+    local port="$1" pids
     if has_cmd lsof; then
         pids=$(lsof -ti "TCP:${port}" -sTCP:LISTEN 2>/dev/null)
     elif has_cmd fuser; then
@@ -415,9 +499,19 @@ port_kill() {
         return 0
     fi
 
-    echo "[qol] Killing PIDs: $pids (port ${port})"
-    # xargs -r to avoid killing nothing
-    echo "$pids" | xargs -r kill -9
+    echo "[qol] Sending SIGTERM to PIDs: $pids (port ${port})"
+    echo "$pids" | xargs -r kill
+
+    sleep 1
+    local still_running=""
+    for pid in $pids; do
+        kill -0 "$pid" 2>/dev/null && still_running+="$pid "
+    done
+
+    if [[ -n "$still_running" ]]; then
+        read -r -p "[qol] Still running: ${still_running}. Force kill (SIGKILL)? [y/N] " answer
+        [[ "$answer" =~ ^[Yy]$ ]] && echo "$still_running" | xargs -r kill -9
+    fi
 }
 
 # psg: Search running processes by command line
@@ -450,6 +544,11 @@ envload() {
         if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
             key="${BASH_REMATCH[1]}"
             value="${BASH_REMATCH[2]}"
+            # Refuse to load variables that could hijack shell behavior
+            if [[ "$key" =~ ^(BASH_ENV|ENV|SHELLOPTS|BASHOPTS|PROMPT_COMMAND|PS1|PS2|PS4|CDPATH|IFS)$ ]]; then
+                echo "[qol] Refusing to load sensitive variable: $key" >&2
+                continue
+            fi
             # Strip surrounding quotes
             value="${value%\"}"
             value="${value#\"}"
@@ -476,10 +575,12 @@ clipcopy() {
         xclip -selection clipboard
     elif has_cmd xsel; then
         xsel --clipboard --input
+    elif has_cmd win32yank.exe; then
+        win32yank.exe -i
     elif has_cmd clip.exe; then
         clip.exe
     else
-        echo "[qol] No clipboard tool found (pbcopy, wl-copy, xclip, xsel, clip.exe)." >&2
+        echo "[qol] No clipboard tool found (pbcopy, wl-copy, xclip, xsel, win32yank.exe, clip.exe)." >&2
         return 1
     fi
 }
@@ -493,10 +594,12 @@ clippaste() {
         xclip -selection clipboard -o
     elif has_cmd xsel; then
         xsel --clipboard --output
+    elif has_cmd win32yank.exe; then
+        win32yank.exe -o
     elif has_cmd powershell.exe; then
         powershell.exe -NoProfile -Command Get-Clipboard
     else
-        echo "[qol] No clipboard paste tool found (pbpaste, wl-paste, xclip, xsel, powershell.exe)." >&2
+        echo "[qol] No clipboard paste tool found (pbpaste, wl-paste, xclip, xsel, win32yank.exe, powershell.exe)." >&2
         return 1
     fi
 }
@@ -679,6 +782,33 @@ if [[ "${QOL_ENABLE_GIT}" == "1" ]] && has_cmd git; then
     # gwip: Stash all tracked/untracked changes with a timestamped message
     gwip() {
         git stash push -u -m "WIP: $(date '+%Y-%m-%d %H:%M')"
+    }
+
+    # gmain: Switch to the default branch (main or master), auto-detected
+    gmain() {
+        local branch
+        branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | command sed 's@^refs/remotes/origin/@@')
+        branch="${branch:-main}"
+        git switch "$branch"
+    }
+
+    # gsync: Fetch all remotes and rebase current branch
+    gsync() {
+        git fetch --all --prune
+        git pull --rebase --autostash
+    }
+
+    # gfixup: Create a --fixup commit for a given commit hash
+    # Usage: gfixup <commit>
+    gfixup() {
+        [[ -z "$1" ]] && { echo "Usage: gfixup <commit>" >&2; return 1; }
+        git commit --fixup "$1"
+    }
+
+    # grbi: Interactive rebase from a given base (default: origin/main)
+    # Usage: grbi [base-commit]
+    grbi() {
+        git rebase -i "${1:-origin/main}"
     }
 else
     [[ "${QOL_ENABLE_GIT}" == "1" ]] && __qol_warn "git" "Install 'git' to enable git helpers."
@@ -886,7 +1016,7 @@ if [[ "${QOL_ENABLE_K8S}" == "1" ]] && has_cmd kubectl; then
     }
 
     # Shell completion if available
-    if [[ "${__QOL_FIRST_LOAD}" == "1" ]] && kubectl completion bash &>/dev/null; then
+    if [[ "${__QOL_FIRST_LOAD}" == "1" ]] && [[ "${QOL_ENABLE_COMPLETIONS}" == "1" ]] && kubectl completion bash &>/dev/null; then
         # shellcheck disable=SC1090
         source <(kubectl completion bash)
         alias k='kubectl'
@@ -1189,13 +1319,18 @@ if [[ "${QOL_ENABLE_FZF}" == "1" ]] && has_cmd fzf; then
         [[ -n "$dir" ]] && cd "$dir" || return 1
     }
 
-    # fkill: Fuzzy kill a process
+    # fkill: Fuzzy kill a process (SIGTERM first; offers SIGKILL if still running)
     fkill() {
         local pid
         pid=$(ps aux | tail -n +2 | fzf --height 40% --reverse | awk '{print $2}')
         if [[ -n "$pid" ]]; then
-            echo "[qol] Killing PID: $pid"
-            kill -9 "$pid"
+            echo "[qol] Sending SIGTERM to PID: $pid"
+            kill "$pid"
+            sleep 1
+            if kill -0 "$pid" 2>/dev/null; then
+                read -r -p "[qol] PID $pid still running. Force kill? [y/N] " answer
+                [[ "$answer" =~ ^[Yy]$ ]] && kill -9 "$pid"
+            fi
         fi
     }
 
@@ -1289,10 +1424,25 @@ if [[ "${QOL_ENABLE_PROMPT}" == "1" ]]; then
             PS1="${__QOL_C_BOLD}${__QOL_C_GREEN}\u\[\033[0m\]@${__QOL_C_CYAN}\h\[\033[0m\] ${__QOL_C_BLUE}\w\[\033[0m\]${git_part}\n${exit_indicator}${__QOL_C_BOLD}\$\[\033[0m\] "
         }
 
+        # __qol_add_prompt_command: Safely append a command to PROMPT_COMMAND,
+        # supporting both string and array forms (Bash 5.1+ supports array).
+        __qol_add_prompt_command() {
+            local cmd="$1"
+            if declare -p PROMPT_COMMAND 2>/dev/null | command grep -q 'declare \-[^ ]*a'; then
+                # Array form
+                local existing
+                for existing in "${PROMPT_COMMAND[@]}"; do
+                    [[ "$existing" == "$cmd" ]] && return 0
+                done
+                PROMPT_COMMAND+=("$cmd")
+            else
+                [[ "${PROMPT_COMMAND:-}" == *"$cmd"* ]] && return 0
+                PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND}; }${cmd}"
+            fi
+        }
+
         # Only add if not already in PROMPT_COMMAND
-        if [[ "${PROMPT_COMMAND}" != *"__qol_set_prompt"* ]]; then
-            PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND}; }__qol_set_prompt"
-        fi
+        __qol_add_prompt_command "__qol_set_prompt"
     fi
 fi
 
@@ -1300,13 +1450,15 @@ fi
 # SECTION 19: SHELL OPTIONS & HISTORY
 # =============================================================================
 
-# Better history
-HISTSIZE=10000
-HISTFILESIZE=20000
-HISTCONTROL=ignoreboth:erasedups   # Ignore duplicates & lines starting with space
-HISTIGNORE="ls:ll:cd:pwd:exit:clear:history:c:h"
-shopt -s histappend                 # Append rather than overwrite history file
-shopt -s cmdhist                    # Multi-line commands in one history entry
+# Better history (gated by QOL_ENABLE_HISTORY)
+if [[ "${QOL_ENABLE_HISTORY}" == "1" ]]; then
+    HISTSIZE=10000
+    HISTFILESIZE=20000
+    HISTCONTROL=ignoreboth:erasedups   # Ignore duplicates & lines starting with space
+    HISTIGNORE="ls:ll:cd:pwd:exit:clear:history:c:h"
+    shopt -s histappend                 # Append rather than overwrite history file
+    shopt -s cmdhist                    # Multi-line commands in one history entry
+fi
 
 # Quality of life shell options
 shopt -s checkwinsize               # Update LINES/COLUMNS after each command
@@ -1339,6 +1491,74 @@ if [[ -z "${EDITOR:-}" ]]; then
 fi
 
 # =============================================================================
+# SECTION 19B: DIRECTORY BOOKMARKS
+# mark/jump/marks — named directory shortcuts with optional persistence
+# =============================================================================
+
+declare -A __QOL_MARKS=()
+__QOL_MARKS_FILE="${XDG_CACHE_HOME:-$HOME/.cache}/qol/marks"
+
+# Load persisted marks on first load
+if [[ "${__QOL_FIRST_LOAD}" == "1" ]] && [[ -f "$__QOL_MARKS_FILE" ]]; then
+    while IFS='=' read -r key val; do
+        [[ -n "$key" && -n "$val" ]] && __QOL_MARKS["$key"]="$val"
+    done < "$__QOL_MARKS_FILE"
+fi
+
+# mark: Save current directory under a name
+# Usage: mark <name>
+mark() {
+    [[ -z "$1" ]] && { echo "Usage: mark <name>" >&2; return 1; }
+    __QOL_MARKS["$1"]="$PWD"
+    echo "[qol] Marked '$1' -> $PWD"
+    # Persist
+    command mkdir -p "$(dirname "$__QOL_MARKS_FILE")"
+    local key
+    {
+        for key in "${!__QOL_MARKS[@]}"; do
+            printf '%s=%s\n' "$key" "${__QOL_MARKS[$key]}"
+        done
+    } > "$__QOL_MARKS_FILE"
+}
+
+# jump: cd to a named mark
+# Usage: jump <name>
+jump() {
+    [[ -z "$1" ]] && { echo "Usage: jump <name>" >&2; return 1; }
+    local dir="${__QOL_MARKS[$1]:-}"
+    [[ -z "$dir" ]] && { echo "[qol] No mark named '$1'. Use 'marks' to list." >&2; return 1; }
+    cd "$dir" || return 1
+}
+
+# marks: List all saved marks
+marks() {
+    if [[ "${#__QOL_MARKS[@]}" -eq 0 ]]; then
+        echo "[qol] No marks set. Use 'mark <name>' to create one."
+        return 0
+    fi
+    local key
+    for key in "${!__QOL_MARKS[@]}"; do
+        printf "  %-20s %s\n" "$key" "${__QOL_MARKS[$key]}"
+    done | sort
+}
+
+# unmark: Remove a named mark
+# Usage: unmark <name>
+unmark() {
+    [[ -z "$1" ]] && { echo "Usage: unmark <name>" >&2; return 1; }
+    [[ -z "${__QOL_MARKS[$1]:-}" ]] && { echo "[qol] No mark named '$1'." >&2; return 1; }
+    unset '__QOL_MARKS[$1]'
+    # Re-persist
+    local key
+    {
+        for key in "${!__QOL_MARKS[@]}"; do
+            printf '%s=%s\n' "$key" "${__QOL_MARKS[$key]}"
+        done
+    } > "$__QOL_MARKS_FILE"
+    echo "[qol] Removed mark '$1'."
+}
+
+# =============================================================================
 # SECTION 20: DOCTOR & HELP
 # =============================================================================
 
@@ -1353,7 +1573,8 @@ qol_doctor() {
 
     # System info
     echo -e "${CYAN}System:${RESET}"
-    echo "  OS:      $(uname -srm)"
+    echo "  Version: terminal-qol ${QOL_VERSION}"
+    echo "  OS:      $(uname -srm)$(qol_is_wsl && echo ' [WSL]' || true)"
     echo "  Bash:    ${BASH_VERSION}"
     echo "  Shell:   ${SHELL}"
     echo "  User:    $(whoami)"
@@ -1419,6 +1640,20 @@ qol_doctor() {
     echo "  QOL_ENABLE_PROMPT=${QOL_ENABLE_PROMPT}  QOL_SAFE_ALIASES=${QOL_SAFE_ALIASES}  QOL_WARN_MISSING=${QOL_WARN_MISSING}"
     echo "  QOL_ENABLE_FZF=${QOL_ENABLE_FZF}  QOL_ENABLE_ZOXIDE=${QOL_ENABLE_ZOXIDE}  QOL_ENABLE_DIRENV=${QOL_ENABLE_DIRENV}"
     echo "  QOL_ENABLE_GH=${QOL_ENABLE_GH}  QOL_ENABLE_TMUX=${QOL_ENABLE_TMUX}  QOL_ENABLE_PODMAN=${QOL_ENABLE_PODMAN}"
+    echo "  QOL_STRICT_ALIASES=${QOL_STRICT_ALIASES}  QOL_ENABLE_COMPLETIONS=${QOL_ENABLE_COMPLETIONS}  QOL_ENABLE_HISTORY=${QOL_ENABLE_HISTORY}  QOL_QUIET=${QOL_QUIET}"
+}
+
+# qol_version: Print the current version
+qol_version() {
+    echo "terminal-qol ${QOL_VERSION}"
+}
+
+# qol_features: Print a compact table of active features
+qol_features() {
+    local feature
+    for feature in "${!__QOL_FEATURES[@]}"; do
+        printf "  %-20s %s\n" "$feature" "${__QOL_FEATURES[$feature]}"
+    done | sort
 }
 
 # qol_help: List all user-facing functions and aliases
@@ -1432,10 +1667,18 @@ qol_help() {
 
     echo -e "${CYAN}Navigation:${RESET}"
     echo "  mkcd <dir>          Create directory and cd into it"
+    echo "  take <dir>          Alias for mkcd"
+    echo "  mktempd             Create a temp directory and cd into it"
     echo "  up [N]              Move up N directories (default: 1)"
     echo "  groot               Jump to git repository root"
     echo "  fcd                 Fuzzy-find and cd to directory (requires fzf)"
     echo "  z <query>           Smart jump (requires zoxide)"
+    echo
+    echo -e "${CYAN}Directory Bookmarks:${RESET}"
+    echo "  mark <name>         Save current directory as a named bookmark"
+    echo "  jump <name>         cd to a named bookmark"
+    echo "  marks               List all saved bookmarks"
+    echo "  unmark <name>       Remove a saved bookmark"
     echo
 
     echo -e "${CYAN}Files & Archives:${RESET}"
@@ -1444,7 +1687,9 @@ qol_help() {
     echo "  path_add <dir>      Safely prepend dir to PATH (no duplicates)"
     echo "  path_add_back <dir> Safely append dir to PATH"
     echo "  path_rm <dir>       Remove dir from PATH"
-    echo "  path_dedupe         Remove duplicate PATH entries"
+    echo "  path_dedupe         Remove duplicate PATH entries (canonicalized)"
+    echo "  path_contains <dir> Check whether PATH includes a directory"
+    echo "  ff <pattern>        Fast file find (requires fd)"
     echo "  backup <path>       Create timestamped .bak copy"
     echo "  sha256 <file>       Print SHA-256 checksum"
     echo
@@ -1464,7 +1709,7 @@ qol_help() {
     echo "  clipcopy            Copy stdin to system clipboard"
     echo "  clippaste           Print system clipboard contents"
     echo "  reload_shell        Reload ~/.bashrc"
-    echo "  please              Re-run last command with sudo"
+    echo "  please              Re-run last command with sudo (safe function)"
     echo
 
     echo -e "${CYAN}JSON (requires jq):${RESET}"
@@ -1489,6 +1734,10 @@ qol_help() {
     echo "  gignored <path>     Explain why a path is ignored"
     echo "  gwip                Stash tracked/untracked changes as WIP"
     echo "  gsave               Quick WIP commit with timestamp"
+    echo "  gmain               Switch to default branch (main/master)"
+    echo "  gsync               Fetch all remotes and rebase current branch"
+    echo "  gfixup <commit>     Create a --fixup commit for a given hash"
+    echo "  grbi [base]         Interactive rebase from base (default: origin/main)"
     echo
 
     echo -e "${CYAN}GitHub CLI (QOL_ENABLE_GH=1):${RESET}"
@@ -1562,9 +1811,12 @@ qol_help() {
 
     echo -e "${CYAN}Diagnostics:${RESET}"
     echo "  qol_doctor          Show feature status, tool availability, system info"
+    echo "  qol_features        Compact list of active features"
+    echo "  qol_version         Print terminal-qol version"
     echo "  qol_help            Show this help"
     echo
     echo -e "  Configure: set ${GREEN}QOL_* variables${RESET} before sourcing terminal-qol.bash"
+    echo -e "  New in v2: ${GREEN}QOL_STRICT_ALIASES QOL_ENABLE_COMPLETIONS QOL_ENABLE_HISTORY QOL_QUIET${RESET}"
 }
 
 # =============================================================================
