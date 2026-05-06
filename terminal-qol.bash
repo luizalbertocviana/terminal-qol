@@ -47,6 +47,7 @@ fi
 : "${QOL_ENABLE_ZOXIDE:=1}"      # zoxide integration
 : "${QOL_ENABLE_GH:=1}"          # GitHub CLI helpers
 : "${QOL_ENABLE_TMUX:=1}"        # tmux helpers
+: "${QOL_ENABLE_PODMAN:=1}"      # Podman helpers
 : "${QOL_PROMPT_STYLE:=minimal}" # Prompt style: minimal | powerline | emoji
 
 # Internal state
@@ -769,6 +770,82 @@ else
     [[ "${QOL_ENABLE_DOCKER}" == "1" ]] && __qol_warn "docker" "Install 'docker' to enable Docker helpers."
 fi
 
+
+# =============================================================================
+# SECTION 11B: PODMAN HELPERS
+# =============================================================================
+
+if [[ "${QOL_ENABLE_PODMAN}" == "1" ]] && has_cmd podman; then
+    __qol_feature "podman" "enabled"
+
+    alias pm='podman'
+    alias pmps='podman ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"'
+    alias pmpsa='podman ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"'
+    alias pmi='podman images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"'
+    alias pmv='podman volume ls'
+    alias pmn='podman network ls'
+
+    # pmc: podman compose wrapper
+    # Usage: pmc up -d
+    pmc() {
+        if podman compose version &>/dev/null; then
+            podman compose "$@"
+        elif has_cmd podman-compose; then
+            podman-compose "$@"
+        else
+            echo "[qol] Podman Compose not found (podman compose or podman-compose)." >&2
+            return 1
+        fi
+    }
+
+    # pmsh: Shell into a running Podman container
+    # Usage: pmsh [container]
+    pmsh() {
+        local container="${1:-}"
+        if [[ -z "$container" ]]; then
+            if has_cmd fzf && [[ "${QOL_ENABLE_FZF}" == "1" ]]; then
+                container=$(podman ps --format '{{.Names}}' | fzf --height 40% --reverse)
+            else
+                echo "Usage: pmsh <container_name>" >&2
+                return 1
+            fi
+        fi
+        [[ -z "$container" ]] && return 1
+        podman exec -it "$container" bash 2>/dev/null || podman exec -it "$container" sh
+    }
+
+    # pmlogs: Tail logs for a container
+    # Usage: pmlogs <container>
+    pmlogs() {
+        local container="${1:-}"
+        [[ -z "$container" ]] && { echo "Usage: pmlogs <container>" >&2; return 1; }
+        podman logs -f --tail=100 "$container"
+    }
+
+    # pmclean: Remove stopped containers, dangling images, unused networks
+    pmclean() {
+        echo "[qol] Pruning Podman resources..."
+        podman system prune -f
+    }
+
+    # pmclean_all: Prompt, then prune containers/images/volumes
+    pmclean_all() {
+        read -r -p "[qol] Prune all unused Podman resources, including volumes? [y/N] " answer
+        [[ "$answer" =~ ^[Yy]$ ]] || return 0
+        podman system prune -af --volumes
+    }
+
+    # pmip: Show container IP address
+    # Usage: pmip <container>
+    pmip() {
+        local container="${1:-}"
+        [[ -z "$container" ]] && { echo "Usage: pmip <container>" >&2; return 1; }
+        podman inspect -f '{{.NetworkSettings.IPAddress}}' "$container"
+    }
+else
+    [[ "${QOL_ENABLE_PODMAN}" == "1" ]] && __qol_warn "podman" "Install 'podman' to enable Podman helpers."
+fi
+
 # =============================================================================
 # SECTION 12: KUBERNETES HELPERS
 # =============================================================================
@@ -829,6 +906,10 @@ if [[ "${QOL_ENABLE_TMUX}" == "1" ]] && has_cmd tmux; then
     alias ta='tmux attach -t'
     alias tls='tmux list-sessions'
     alias tn='tmux new -s'
+    alias twl='tmux list-windows'
+    alias tpl='tmux list-panes'
+    alias trn='tmux rename-session'
+    alias trw='tmux rename-window'
 
     # t: Attach to an existing tmux session or create one
     # Usage: t [session]
@@ -838,11 +919,165 @@ if [[ "${QOL_ENABLE_TMUX}" == "1" ]] && has_cmd tmux; then
     }
 
     # tk: Kill a tmux session after confirmation
+    # Usage: tk <session>
     tk() {
         local session="${1:-}"
         [[ -z "$session" ]] && { echo "Usage: tk <session>" >&2; return 1; }
         read -r -p "[qol] Kill tmux session '${session}'? [y/N] " answer
         [[ "$answer" =~ ^[Yy]$ ]] && tmux kill-session -t "$session"
+    }
+
+    # tks: Kill the current tmux session after confirmation
+    tks() {
+        [[ -z "${TMUX:-}" ]] && { echo "[qol] Not inside tmux." >&2; return 1; }
+        local session
+        session="$(tmux display-message -p '#S')"
+        read -r -p "[qol] Kill current tmux session '${session}'? [y/N] " answer
+        [[ "$answer" =~ ^[Yy]$ ]] && tmux kill-session -t "$session"
+    }
+
+    # tw: Create a new tmux window
+    # Usage: tw [name] [command...]
+    tw() {
+        local name="${1:-}"
+        if [[ -n "$name" ]]; then
+            shift
+            if [[ "$#" -gt 0 ]]; then
+                tmux new-window -n "$name" "$*"
+            else
+                tmux new-window -n "$name"
+            fi
+        else
+            tmux new-window
+        fi
+    }
+
+    # twa: Attach/create session with named first window
+    # Usage: twa <session> [window]
+    twa() {
+        local session="${1:-main}"
+        local window="${2:-shell}"
+        tmux new-session -A -s "$session" -n "$window"
+    }
+
+    # tsw: Switch tmux session, fzf-enhanced when available
+    # Usage: tsw [session]
+    tsw() {
+        local session="${1:-}"
+        if [[ -z "$session" ]]; then
+            if has_cmd fzf && [[ "${QOL_ENABLE_FZF}" == "1" ]]; then
+                session="$(tmux list-sessions -F '#S' 2>/dev/null | fzf --height 40% --reverse)"
+            else
+                echo "Usage: tsw <session>" >&2
+                tmux list-sessions
+                return 1
+            fi
+        fi
+        [[ -n "$session" ]] && tmux switch-client -t "$session"
+    }
+
+    # tsp: Split pane
+    # Usage: tsp [h|v] [command...]
+    #   h = horizontal split, v = vertical split
+    tsp() {
+        local direction="${1:-v}"
+        shift || true
+
+        case "$direction" in
+            h|horizontal)
+                if [[ "$#" -gt 0 ]]; then
+                    tmux split-window -h "$*"
+                else
+                    tmux split-window -h
+                fi
+                ;;
+            v|vertical)
+                if [[ "$#" -gt 0 ]]; then
+                    tmux split-window -v "$*"
+                else
+                    tmux split-window -v
+                fi
+                ;;
+            *)
+                echo "Usage: tsp [h|v] [command...]" >&2
+                return 1
+                ;;
+        esac
+    }
+
+    # tsh: Horizontal split
+    # Usage: tsh [command...]
+    tsh() {
+        if [[ "$#" -gt 0 ]]; then
+            tmux split-window -h "$*"
+        else
+            tmux split-window -h
+        fi
+    }
+
+    # tsv: Vertical split
+    # Usage: tsv [command...]
+    tsv() {
+        if [[ "$#" -gt 0 ]]; then
+            tmux split-window -v "$*"
+        else
+            tmux split-window -v
+        fi
+    }
+
+    # tx: Send a command to a pane
+    # Usage: tx <target-pane> <command...>
+    # Example: tx :.1 "npm test"
+    tx() {
+        local target="${1:-}"
+        shift || true
+        [[ -z "$target" || "$#" -eq 0 ]] && {
+            echo "Usage: tx <target-pane> <command...>" >&2
+            echo "Example: tx :.1 \"npm test\"" >&2
+            return 1
+        }
+        tmux send-keys -t "$target" "$*" C-m
+    }
+
+    # txc: Send command to current pane
+    # Usage: txc <command...>
+    txc() {
+        [[ "$#" -eq 0 ]] && { echo "Usage: txc <command...>" >&2; return 1; }
+        tmux send-keys "$*" C-m
+    }
+
+    # tclear: Clear current pane
+    tclear() {
+        tmux send-keys C-l
+    }
+
+    # tlayout: Apply a tmux layout
+    # Usage: tlayout even-horizontal|even-vertical|main-horizontal|main-vertical|tiled
+    tlayout() {
+        local layout="${1:-tiled}"
+        tmux select-layout "$layout"
+    }
+
+    # tzoom: Toggle pane zoom
+    tzoom() {
+        tmux resize-pane -Z
+    }
+
+    # tnext / tprev: Move between windows
+    tnext() {
+        tmux next-window
+    }
+
+    tprev() {
+        tmux previous-window
+    }
+
+    # tpane: Select pane by number
+    # Usage: tpane <pane-number>
+    tpane() {
+        local pane="${1:-}"
+        [[ -z "$pane" ]] && { echo "Usage: tpane <pane-number>" >&2; return 1; }
+        tmux select-pane -t "$pane"
     }
 else
     [[ "${QOL_ENABLE_TMUX}" == "1" ]] && __qol_warn "tmux" "Install 'tmux' to enable tmux helpers."
@@ -1154,6 +1389,7 @@ qol_doctor() {
         "delta:Better git diffs"
         "jq:JSON processor"
         "docker:Container runtime"
+        "podman:Container runtime"
         "kubectl:Kubernetes CLI"
         "node:Node.js runtime"
         "python3:Python 3"
@@ -1182,7 +1418,7 @@ qol_doctor() {
     echo "  QOL_ENABLE_GIT=${QOL_ENABLE_GIT}  QOL_ENABLE_DOCKER=${QOL_ENABLE_DOCKER}  QOL_ENABLE_K8S=${QOL_ENABLE_K8S}"
     echo "  QOL_ENABLE_PROMPT=${QOL_ENABLE_PROMPT}  QOL_SAFE_ALIASES=${QOL_SAFE_ALIASES}  QOL_WARN_MISSING=${QOL_WARN_MISSING}"
     echo "  QOL_ENABLE_FZF=${QOL_ENABLE_FZF}  QOL_ENABLE_ZOXIDE=${QOL_ENABLE_ZOXIDE}  QOL_ENABLE_DIRENV=${QOL_ENABLE_DIRENV}"
-    echo "  QOL_ENABLE_GH=${QOL_ENABLE_GH}  QOL_ENABLE_TMUX=${QOL_ENABLE_TMUX}"
+    echo "  QOL_ENABLE_GH=${QOL_ENABLE_GH}  QOL_ENABLE_TMUX=${QOL_ENABLE_TMUX}  QOL_ENABLE_PODMAN=${QOL_ENABLE_PODMAN}"
 }
 
 # qol_help: List all user-facing functions and aliases
@@ -1272,6 +1508,18 @@ qol_help() {
     echo "  dklogs <container>  Tail container logs"
     echo
 
+    echo -e "${CYAN}Podman (QOL_ENABLE_PODMAN=1):${RESET}"
+    echo "  pm                  podman"
+    echo "  pmps / pmpsa        List running / all containers"
+    echo "  pmi                 List images"
+    echo "  pmc                 podman compose wrapper"
+    echo "  pmsh [container]    Shell into container"
+    echo "  pmlogs <container>  Tail container logs"
+    echo "  pmclean             Prune unused Podman resources"
+    echo "  pmclean_all         Prune Podman resources including volumes"
+    echo "  pmip <container>    Show container IP address"
+    echo
+
     echo -e "${CYAN}Kubernetes (QOL_ENABLE_K8S=1):${RESET}"
     echo "  k                   kubectl"
     echo "  kgp / kgpa          get pods / all namespaces"
@@ -1284,6 +1532,19 @@ qol_help() {
     echo "  t [session]         Attach or create tmux session"
     echo "  tls / tn / ta       list / new / attach sessions"
     echo "  tk <session>        Kill a session after confirmation"
+    echo "  tks                 Kill current session after confirmation"
+    echo "  tw [name] [cmd]     Create new window"
+    echo "  twa <session> [win] Attach/create session with named window"
+    echo "  tsw [session]       Switch session, fzf-enhanced"
+    echo "  tsh / tsv [cmd]     Split pane horizontally / vertically"
+    echo "  tsp [h|v] [cmd]     Split pane by direction"
+    echo "  tx <pane> <cmd>     Send command to target pane"
+    echo "  txc <cmd>           Send command to current pane"
+    echo "  tclear              Clear current pane"
+    echo "  tlayout [layout]    Apply tmux layout"
+    echo "  tzoom               Toggle pane zoom"
+    echo "  tnext / tprev       Next / previous window"
+    echo "  tpane <num>         Select pane by number"
     echo
 
     echo -e "${CYAN}FZF Helpers (requires fzf):${RESET}"
