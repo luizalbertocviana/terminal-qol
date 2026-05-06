@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>terminal-qol — Shell Quality of Life</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0c0f;
+    --bg2: #111418;
+    --bg3: #181c22;
+    --border: #252b35;
+    --text: #c8d0dc;
+    --muted: #5a6478;
+    --accent: #00e5a0;
+    --accent2: #0088ff;
+    --accent3: #ff6b35;
+    --warn: #f0c040;
+    --red: #ff4d6d;
+    --card-shadow: 0 2px 24px rgba(0,0,0,0.5);
+    --mono: 'Fira Code', monospace;
+    --sans: 'Syne', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 14px;
+    line-height: 1.7;
+    overflow-x: hidden;
+    cursor: crosshair;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.06) 2px,
+      rgba(0,0,0,0.06) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* Ambient glow */
+  body::after {
+    content: '';
+    position: fixed;
+    top: -20%;
+    left: -10%;
+    width: 60%;
+    height: 60%;
+    background: radial-gradient(ellipse, rgba(0,229,160,0.04) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ===== LAYOUT ===== */
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ===== HERO ===== */
+  .hero {
+    padding: 5rem 0 3rem;
+    position: relative;
+  }
+
+  .hero-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 1.2rem;
+    opacity: 0;
+    animation: fadeUp 0.5s ease 0.1s forwards;
+  }
+
+  .hero-title {
+    font-family: var(--sans);
+    font-size: clamp(2.8rem, 7vw, 5.5rem);
+    font-weight: 800;
+    line-height: 0.95;
+    color: #fff;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.5rem;
+    opacity: 0;
+    animation: fadeUp 0.6s ease 0.2s forwards;
+  }
+
+  .hero-title span {
+    color: var(--accent);
+  }
+
+  .hero-sub {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 2.5rem;
+    opacity: 0;
+    animation: fadeUp 0.6s ease 0.35s forwards;
+  }
+
+  .hero-badges {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    opacity: 0;
+    animation: fadeUp 0.6s ease 0.45s forwards;
+  }
+
+  .badge {
+    padding: 0.25rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    background: var(--bg2);
+  }
+
+  .badge.green { border-color: rgba(0,229,160,0.3); color: var(--accent); background: rgba(0,229,160,0.06); }
+  .badge.blue { border-color: rgba(0,136,255,0.3); color: var(--accent2); background: rgba(0,136,255,0.06); }
+
+  /* ===== TERMINAL BLOCK ===== */
+  .terminal-wrap {
+    margin: 2rem 0 3.5rem;
+    opacity: 0;
+    animation: fadeUp 0.7s ease 0.55s forwards;
+  }
+
+  .terminal {
+    background: #060809;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: var(--card-shadow), 0 0 60px rgba(0,229,160,0.04);
+  }
+
+  .terminal-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .dot.red { background: #ff5f57; }
+  .dot.yellow { background: #febc2e; }
+  .dot.green { background: #28c840; }
+  .terminal-title { margin-left: auto; font-size: 11px; color: var(--muted); letter-spacing: 0.1em; }
+
+  .terminal-body {
+    padding: 1.25rem 1.5rem;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.8;
+    overflow-x: auto;
+  }
+
+  .t-comment { color: #3d4f60; }
+  .t-prompt { color: var(--accent2); }
+  .t-cmd { color: #e8eaf0; }
+  .t-out { color: var(--muted); }
+  .t-ok { color: var(--accent); }
+  .t-warn { color: var(--warn); }
+  .t-err { color: var(--red); }
+  .t-key { color: var(--accent3); }
+
+  .line { display: block; min-height: 1.8em; }
+
+  /* Blinking cursor */
+  .cursor {
+    display: inline-block;
+    width: 8px;
+    height: 1em;
+    background: var(--accent);
+    vertical-align: text-bottom;
+    animation: blink 1s step-end infinite;
+    margin-left: 2px;
+  }
+
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+  /* ===== NAV TABS ===== */
+  .tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin: 3rem 0 2rem;
+    overflow-x: auto;
+    opacity: 0;
+    animation: fadeUp 0.5s ease 0.7s forwards;
+  }
+
+  .tab {
+    padding: 0.6rem 1.2rem;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    cursor: pointer;
+    border: none;
+    background: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.2s, border-color 0.2s;
+    white-space: nowrap;
+  }
+
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; animation: fadeIn 0.3s ease; }
+
+  /* ===== SECTIONS ===== */
+  .section-title {
+    font-family: var(--sans);
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #fff;
+    margin: 2rem 0 1rem;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ===== INSTALL ===== */
+  .install-steps { display: grid; gap: 1rem; }
+
+  .step {
+    display: grid;
+    grid-template-columns: 2rem 1fr;
+    gap: 1rem;
+    align-items: start;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    padding: 1.25rem;
+    border-radius: 4px;
+    transition: border-color 0.2s;
+  }
+
+  .step:hover { border-color: rgba(0,229,160,0.25); }
+
+  .step-num {
+    font-family: var(--sans);
+    font-weight: 800;
+    font-size: 1.4rem;
+    color: var(--accent);
+    line-height: 1;
+    opacity: 0.4;
+  }
+
+  .step-label {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: #fff;
+    margin-bottom: 0.4rem;
+  }
+
+  .step p { color: var(--muted); font-size: 13px; margin-bottom: 0.6rem; }
+
+  /* ===== CODE ===== */
+  .code-block {
+    background: #060809;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.75rem 1rem;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: #c8d0dc;
+    position: relative;
+    overflow-x: auto;
+  }
+
+  .code-block .copy-btn {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    padding: 0.2rem 0.5rem;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .code-block .copy-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .code-block .copy-btn.copied { color: var(--accent); }
+
+  .hl { color: var(--accent); }
+  .hl2 { color: var(--accent2); }
+  .hl3 { color: var(--accent3); }
+  .hl-str { color: #f0c87a; }
+  .hl-comment { color: #3d4f60; }
+
+  /* ===== REFERENCE TABLE ===== */
+  .ref-group { margin-bottom: 2rem; }
+
+  .ref-group-title {
+    font-family: var(--sans);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.6rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid rgba(0,229,160,0.15);
+  }
+
+  .ref-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.3rem;
+  }
+
+  @media (max-width: 600px) { .ref-grid { grid-template-columns: 1fr; } }
+
+  .ref-item {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.75rem;
+    align-items: baseline;
+    padding: 0.5rem 0.75rem;
+    border-radius: 3px;
+    transition: background 0.15s;
+  }
+
+  .ref-item:hover { background: var(--bg2); }
+
+  .ref-cmd {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--accent3);
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+  .ref-desc {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  /* ===== DEPENDENCY MATRIX ===== */
+  .matrix {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .matrix-row {
+    display: grid;
+    grid-template-columns: 140px 120px 1fr auto;
+    gap: 0;
+    padding: 0.65rem 1rem;
+    border-bottom: 1px solid var(--border);
+    align-items: center;
+    transition: background 0.15s;
+    font-size: 12.5px;
+  }
+
+  .matrix-row:hover:not(.matrix-header) { background: var(--bg2); }
+  .matrix-row:last-child { border-bottom: none; }
+
+  .matrix-header {
+    background: var(--bg2);
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .matrix-feature { color: var(--accent3); font-family: var(--mono); }
+  .matrix-tool { color: var(--accent2); font-family: var(--mono); font-size: 12px; }
+  .matrix-desc { color: var(--muted); }
+  .matrix-required {
+    font-size: 11px;
+    padding: 0.15rem 0.5rem;
+    border-radius: 2px;
+    text-align: center;
+    font-family: var(--sans);
+    font-weight: 600;
+    letter-spacing: 0.05em;
+  }
+  .req-optional { background: rgba(0,229,160,0.1); color: var(--accent); }
+  .req-required { background: rgba(255,109,53,0.12); color: var(--accent3); }
+  .req-builtin { background: rgba(0,136,255,0.1); color: var(--accent2); }
+
+  /* ===== DESIGN NOTES ===== */
+  .note-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    padding: 1.25rem 1.5rem;
+    border-radius: 0 4px 4px 0;
+    margin-bottom: 1rem;
+    font-size: 13px;
+  }
+
+  .note-card h4 {
+    font-family: var(--sans);
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 0.4rem;
+  }
+
+  .note-card p { color: var(--muted); line-height: 1.7; }
+
+  .note-card.blue { border-left-color: var(--accent2); }
+  .note-card.orange { border-left-color: var(--accent3); }
+  .note-card.warn { border-left-color: var(--warn); }
+
+  /* ===== ANIMATIONS ===== */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* ===== FOOTER ===== */
+  footer {
+    margin-top: 5rem;
+    padding: 2rem 0;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+  }
+
+  /* ===== SCROLLBAR ===== */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+  /* ===== CONFIG VARS TABLE ===== */
+  .config-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .config-table th {
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .config-table td {
+    padding: 0.55rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: baseline;
+  }
+
+  .config-table tr:last-child td { border-bottom: none; }
+  .config-table tr:hover td { background: var(--bg2); }
+
+  .config-var { color: var(--accent3); font-family: var(--mono); }
+  .config-default { color: var(--accent2); font-family: var(--mono); }
+  .config-desc { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="hero-label">v1.0.0 — bash quality of life</div>
+    <h1 class="hero-title">terminal<span>-qol</span></h1>
+    <p class="hero-sub">
+      # A production-quality Bash enhancement script. Source it once. Level up forever.
+    </p>
+    <div class="hero-badges">
+      <span class="badge green">✓ Bash 4+</span>
+      <span class="badge green">✓ macOS + Linux</span>
+      <span class="badge blue">✓ ShellCheck Clean</span>
+      <span class="badge">✓ Idempotent</span>
+      <span class="badge">✓ Zero Network on Load</span>
+    </div>
+  </header>
+
+  <!-- QUICK INSTALL TERMINAL -->
+  <div class="terminal-wrap">
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="dot red"></div>
+        <div class="dot yellow"></div>
+        <div class="dot green"></div>
+        <span class="terminal-title">~/.bashrc</span>
+      </div>
+      <div class="terminal-body">
+        <span class="line"><span class="t-comment"># 1. Copy the script</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">mkdir -p ~/.config/qol && cp terminal-qol.bash ~/.config/qol/</span></span>
+        <span class="line"></span>
+        <span class="line"><span class="t-comment"># 2. Add to ~/.bashrc</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">echo '<span class="t-out">[ -f "$HOME/.config/qol/terminal-qol.bash" ] && source "$HOME/.config/qol/terminal-qol.bash"</span>' >> ~/.bashrc</span></span>
+        <span class="line"></span>
+        <span class="line"><span class="t-comment"># 3. Reload</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">source ~/.bashrc</span></span>
+        <span class="line"></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">qol_doctor</span></span>
+        <span class="line"><span class="t-ok">✔ git</span>         <span class="t-ok">✔ fzf</span>         <span class="t-ok">✔ bat</span>         <span class="t-ok">✔ eza</span></span>
+        <span class="line"><span class="t-ok">✔ rg</span>          <span class="t-ok">✔ zoxide</span>      <span class="t-warn">⚠ starship</span>    <span class="t-out">...</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="cursor"></span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- TABS -->
+  <nav class="tabs" role="tablist">
+    <button class="tab active" onclick="showTab('install')">Install</button>
+    <button class="tab" onclick="showTab('reference')">Reference</button>
+    <button class="tab" onclick="showTab('config')">Config</button>
+    <button class="tab" onclick="showTab('deps')">Dependencies</button>
+    <button class="tab" onclick="showTab('design')">Design Notes</button>
+    <button class="tab" onclick="showTab('quickstart')">Quick Start</button>
+  </nav>
+
+  <!-- ===== TAB: INSTALL ===== -->
+  <div class="tab-panel active" id="tab-install">
+    <div class="section-title">Installation</div>
+    <div class="install-steps">
+
+      <div class="step">
+        <div class="step-num">1</div>
+        <div>
+          <div class="step-label">Download the script</div>
+          <p>Place it anywhere on your system. Recommended location:</p>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this)">copy</button>
+            mkdir -p ~/.config/qol<br>
+            cp terminal-qol.bash ~/.config/qol/
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">2</div>
+        <div>
+          <div class="step-label">Source from ~/.bashrc</div>
+          <p>Add this single line at the end of your ~/.bashrc:</p>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this)">copy</button>
+            <span class="hl-comment"># terminal-qol — quality of life enhancements</span><br>
+            [ -f "$HOME/.config/qol/terminal-qol.bash" ] && \<br>
+            &nbsp;&nbsp;source "$HOME/.config/qol/terminal-qol.bash"
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">3</div>
+        <div>
+          <div class="step-label">Optional: Pre-configure before sourcing</div>
+          <p>Set config variables <em>before</em> the source line to customize behavior:</p>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this)">copy</button>
+            <span class="hl-comment"># Disable features you don't want</span><br>
+            <span class="hl">export</span> <span class="hl3">QOL_ENABLE_K8S</span>=<span class="hl-str">0</span><br>
+            <span class="hl">export</span> <span class="hl3">QOL_SAFE_ALIASES</span>=<span class="hl-str">0</span>&nbsp;&nbsp;<span class="hl-comment"># if you prefer unguarded rm</span><br>
+            <span class="hl">export</span> <span class="hl3">QOL_ENABLE_PROMPT</span>=<span class="hl-str">0</span>&nbsp;<span class="hl-comment"># if you manage your own prompt</span><br>
+            [ -f "$HOME/.config/qol/terminal-qol.bash" ] && \<br>
+            &nbsp;&nbsp;source "$HOME/.config/qol/terminal-qol.bash"
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num">4</div>
+        <div>
+          <div class="step-label">Reload your shell</div>
+          <div class="code-block">
+            <button class="copy-btn" onclick="copyCode(this)">copy</button>
+            source ~/.bashrc&nbsp;&nbsp;<span class="hl-comment"># or open a new terminal</span>
+          </div>
+          <p style="margin-top:0.5rem;">Then run <code style="color:var(--accent)">qol_doctor</code> to see what's active, and <code style="color:var(--accent)">qol_help</code> for the full reference.</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ===== TAB: REFERENCE ===== -->
+  <div class="tab-panel" id="tab-reference">
+    <div class="section-title">Command Reference</div>
+
+    <div class="ref-group">
+      <div class="ref-group-title">Navigation</div>
+      <div class="ref-grid">
+        <div class="ref-item"><span class="ref-cmd">mkcd &lt;dir&gt;</span><span class="ref-desc">Create dir and cd into it</span></div>
+        <div class="ref-item"><span class="ref-cmd">up [N]</span><span class="ref-desc">Move up N directories (default: 1)</span></div>
+        <div class="ref-item"><span class="ref-cmd">..</span><span class="ref-desc">Go up one directory</span></div>
+        <div class="ref-item"><span class="ref-cmd">...</span><span class="ref-desc">Go up two directories</span></div>
+        <div class="ref-item"><span class="ref-cmd">groot</span><span class="ref-desc">Jump to git repository root</span></div>
+        <div class="ref-item"><span class="ref-cmd">fcd</span><span class="ref-desc">Fuzzy-find and cd to directory</span></div>
+        <div class="ref-item"><span class="ref-cmd">z &lt;query&gt;</span><span class="ref-desc">Smart jump (zoxide)</span></div>
+        <div class="ref-item"><span class="ref-cmd">-</span><span class="ref-desc">cd to previous directory</span></div>
+      </div>
+    </div>
+
+    <div class="ref-group">
+      <div class="ref-group-title">Files & Archives</div>
+      <div class="ref-grid">
+        <div class="ref-item"><span class="ref-cmd">extract &lt;file&gt;</span><span class="ref-desc">Auto-detect and extract any archive</span></div>
+        <div class="ref-item"><span class="ref-cmd">path</span><span class="ref-desc">Print PATH entries one per line</span></div>
+        <div class="ref-item"><span class="ref-cmd">path_add &lt;dir&gt;</span><span class="ref-desc">Prepend dir to PATH (no duplicates)</span></div>
+        <div class="ref-item"><span class="ref-cmd">path_add_back &lt;dir&gt;</span><span class="ref-desc">Append dir to PATH safely</span></div>
+        <div class="ref-item"><span class="ref-cmd">ll</span><span class="ref-desc">Detailed listing (eza -lah or ls -lAh)</span></div>
+        <div class="ref-item"><span class="ref-cmd">lt</span><span class="ref-desc">Tree listing (eza --tree)</span></div>
+      </div>
+    </div>
+
+    <div class="ref-group">
+      <div class="ref-group-title">Network & Servers</div>
+      <div class="ref-grid">
+        <div class="ref-item"><span class="ref-cmd">serve [port]</span><span class="ref-desc">HTTP server in current dir (default: 8080)</span></div>
+        <div class="ref-item"><span class="ref-cmd">ports</span><span class="ref-desc">List all listening ports</span></div>
+        <div class="ref-item"><span class="ref-cmd">port_kill &lt;port&gt;</span><span class="ref-desc">Kill process listening on port</span></div>
+        <div class="ref-item"><span class="ref-cmd">GET &lt;url&gt;</span><span class="ref-desc">HTTP GET (httpie > curl > wget)</span></div>
+        <div class="ref-item"><span class="ref-cmd">POST &lt;url&gt;</span><span class="ref-desc">HTTP POST</span></div>
+      </div>
+    </div>
+
+    <div class="ref-group">
+      <div class="ref-group-title">Environment</div>
+      <div class="ref-grid">
+        <div class="ref-item"><span class="ref-cmd">envload [file]</span><span class="ref-desc">Load .env file safely into shell</span></div>
+        <div class="ref-item"><span class="ref-cmd">dotenv [file]</span><span class="ref-desc">Alias for envload</span></div>
+        <div class="ref-item"><span class="ref-cmd">reload_shell</span><span class="ref-desc">Re-source ~/.bashrc</span></div>
+        <div class="ref-item"><span class="ref-cmd">please</span><span class="ref-desc">Re-run last command with sudo</span></div>
+        <div class="ref-item"><span class="ref-cmd">fenv</span><span class="ref-desc">Fuzzy-search env variables</span></div>
+      </div>
+    </div>
+
+    <div class="ref-group">
+      <div class="ref-group-title">JSON (requires jq)</div>
+      <div class="ref-grid">
+        <div class="ref-item"><span class="ref-cmd">jpp [file]</span><span class="ref-desc">Pretty-print JSON from stdin or file</span></div>
+        <div class="ref-item"><span class="ref-cmd">jkeys [file]</span><span class="ref-desc">List top-level keys of JSON object</span></div>
+        <div class="ref-item"><span class="ref-cmd">jlen [file]</span><span class="ref-desc">Count items in array or object</span></div>
+      </div>
+    </div>
+
+    <div class="ref-group">
+      <div class="ref-group-title">Git (QOL_ENABLE_GIT=1)</div>
+      <div class="ref-grid">
+        <div class="ref-item"><span class="ref-cmd">gs</span><span class="ref-desc">git status -sb</span></div>
+        <div class="ref-item"><span class="ref-cmd">ga / gaa</span><span class="ref-desc">git add / add -A</span></div>
+        <div class="ref-item"><span class="ref-cmd">gc / gcm</span><span class="ref-desc">git commit / commit -m</span></div>
+        <div class="ref-item"><span class="ref-cmd">gca</span><span class="ref-desc">git commit --amend</span></div>
+        <div class="ref-item"><span class="ref-cmd">gco / gcob</span><span class="ref-desc">git checkout / checkout -b</span></div>
+        <div class="ref-item"><span class="ref-cmd">gd / gds</span><span class="ref-desc">git diff / diff --staged</span></div>
+        <div class="ref-item"><span class="ref-cmd">glog</span><span class="ref-desc">Decorated graph log (one-line)</span></div>
+        <div class="ref-item"><span class="ref-cmd">gp / gpf / gl</span><span class="ref-desc">push / push --force-with-lease / pull --rebase</span></div>
+        <div class="ref-item"><span class="ref-cmd">gst / gstp</span><span class="ref-desc">stash / stash pop</span></div>
+        <div class="ref-item"><span class="ref-cmd">gundo</span><span class="ref-desc">Undo last commit (keep staged)</span></div>
+        <div class="ref-item"><span class="ref-cmd">gclean_merged</span><span class="ref-desc">Delete merged local branches</span></div>
+        <div class="ref-item"><span class="ref-cmd">gbranch</span><span class="ref-desc">Fuzzy-pick branch (fzf)</span></div>
+        <div class="ref-item"><span class="ref-cmd">gsave</span><span class="ref-desc">Quick WIP commit with timestamp</span></div>
+        <div class="ref-item"><span class="ref-cmd">grestore</span><span class="ref-desc">Unstage all (git restore --staged .)</span></div>
+      </div>
+    </div>
+
+    <div class="ref-group">
+      <div class="ref-group-title">Docker (QOL_ENABLE_DOCKER=1)</div>
+      <div class="ref-grid">
+        <div class="ref-item"><span class="ref-cmd">dkps / dkpsa</span><span class="ref-desc">List running / all containers</span></div>
+        <div class="ref-item"><span class="ref-cmd">dki</span><span class="ref-desc">List images</span></div>
+        <div class="ref-item"><span class="ref-cmd">dksh [name]</span><span class="ref-desc">Shell into container (bash → sh)</span></div>
+        <div class="ref-item"><span class="ref-cmd">dkclean</span><span class="ref-desc">docker system prune</span></div>
+        <div class="ref-item"><span class="ref-cmd">dklogs &lt;name&gt;</span><span class="ref-desc">Tail container logs</span></div>
+        <div class="ref-item"><span class="ref-cmd">dk / dkc</span><span class="ref-desc">docker / docker compose</span></div>
+      </div>
+    </div>
+
+    <div class="ref-group">
+      <div class="ref-group-title">Kubernetes (QOL_ENABLE_K8S=1)</div>
+      <div class="ref-grid">
+        <div class="ref-item"><span class="ref-cmd">k</span><span class="ref-desc">kubectl</span></div>
+        <div class="ref-item"><span class="ref-cmd">kgp / kgpa</span><span class="ref-desc">get pods / all namespaces</span></div>
+        <div class="ref-item"><span class="ref-cmd">kl / ke</span><span class="ref-desc">logs -f / exec -it</span></div>
+        <div class="ref-item"><span class="ref-cmd">kns &lt;ns&gt;</span><span class="ref-desc">Switch namespace</span></div>
+        <div class="ref-item"><span class="ref-cmd">kubens</span><span class="ref-desc">Fuzzy-pick namespace</span></div>
+        <div class="ref-item"><span class="ref-cmd">kubectx</span><span class="ref-desc">Fuzzy-pick context</span></div>
+      </div>
+    </div>
+
+    <div class="ref-group">
+      <div class="ref-group-title">FZF Helpers (requires fzf)</div>
+      <div class="ref-grid">
+        <div class="ref-item"><span class="ref-cmd">fh</span><span class="ref-desc">Interactive history search + exec</span></div>
+        <div class="ref-item"><span class="ref-cmd">fcd</span><span class="ref-desc">Fuzzy cd into directory</span></div>
+        <div class="ref-item"><span class="ref-cmd">fkill</span><span class="ref-desc">Fuzzy-select and kill a process</span></div>
+        <div class="ref-item"><span class="ref-cmd">fenv</span><span class="ref-desc">Fuzzy-search environment variables</span></div>
+      </div>
+    </div>
+
+    <div class="ref-group">
+      <div class="ref-group-title">Language Shortcuts</div>
+      <div class="ref-grid">
+        <div class="ref-item"><span class="ref-cmd">venv [name]</span><span class="ref-desc">Create + activate Python venv (.venv)</span></div>
+        <div class="ref-item"><span class="ref-cmd">pyrun '...'</span><span class="ref-desc">python3 -c shorthand</span></div>
+        <div class="ref-item"><span class="ref-cmd">ni / nid / nig</span><span class="ref-desc">npm install / --save-dev / -g</span></div>
+        <div class="ref-item"><span class="ref-cmd">nr / ns / nt / nb</span><span class="ref-desc">npm run / start / test / build</span></div>
+        <div class="ref-item"><span class="ref-cmd">cb / cr / ct / cc</span><span class="ref-desc">cargo build / run / test / check</span></div>
+        <div class="ref-item"><span class="ref-cmd">cf / ccl</span><span class="ref-desc">cargo fmt / clippy</span></div>
+      </div>
+    </div>
+
+    <div class="ref-group">
+      <div class="ref-group-title">Diagnostics</div>
+      <div class="ref-grid">
+        <div class="ref-item"><span class="ref-cmd">qol_doctor</span><span class="ref-desc">Feature status, tool availability, system info</span></div>
+        <div class="ref-item"><span class="ref-cmd">qol_help</span><span class="ref-desc">Full command reference in the terminal</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== TAB: CONFIG ===== -->
+  <div class="tab-panel" id="tab-config">
+    <div class="section-title">Configuration Variables</div>
+    <p style="color:var(--muted); font-size:13px; margin-bottom:1.5rem;">
+      Set these environment variables <em>before</em> sourcing the script to customize its behavior.
+      All default to sensible values — you only need to override what you want to change.
+    </p>
+
+    <table class="config-table">
+      <thead>
+        <tr>
+          <th>Variable</th>
+          <th>Default</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="config-var">QOL_WARN_MISSING</td><td class="config-default">1</td><td class="config-desc">Emit one-time warnings about missing optional tools</td></tr>
+        <tr><td class="config-var">QOL_ENABLE_GIT</td><td class="config-default">1</td><td class="config-desc">Enable git aliases and functions (gs, glog, groot, etc.)</td></tr>
+        <tr><td class="config-var">QOL_ENABLE_DOCKER</td><td class="config-default">1</td><td class="config-desc">Enable Docker helpers (only activates if docker found)</td></tr>
+        <tr><td class="config-var">QOL_ENABLE_K8S</td><td class="config-default">1</td><td class="config-desc">Enable Kubernetes helpers (only activates if kubectl found)</td></tr>
+        <tr><td class="config-var">QOL_ENABLE_PROMPT</td><td class="config-default">1</td><td class="config-desc">Enable prompt setup (starship if found, else minimal fallback)</td></tr>
+        <tr><td class="config-var">QOL_SAFE_ALIASES</td><td class="config-default">1</td><td class="config-desc">Alias rm/cp/mv/ln with -i flag for confirmation prompts</td></tr>
+        <tr><td class="config-var">QOL_ENABLE_NODE</td><td class="config-default">1</td><td class="config-desc">Enable Node/npm/pnpm aliases</td></tr>
+        <tr><td class="config-var">QOL_ENABLE_PYTHON</td><td class="config-default">1</td><td class="config-desc">Enable Python helpers (venv, pyrun, python alias)</td></tr>
+        <tr><td class="config-var">QOL_ENABLE_RUST</td><td class="config-default">1</td><td class="config-desc">Enable Rust/cargo shortcuts (cb, cr, ct, cc, cf, ccl)</td></tr>
+        <tr><td class="config-var">QOL_ENABLE_FZF</td><td class="config-default">1</td><td class="config-desc">Enable fzf integrations (fh, fcd, fkill, fenv, gbranch)</td></tr>
+        <tr><td class="config-var">QOL_ENABLE_ZOXIDE</td><td class="config-default">1</td><td class="config-desc">Enable zoxide (z command) if installed</td></tr>
+        <tr><td class="config-var">QOL_ENABLE_DIRENV</td><td class="config-default">1</td><td class="config-desc">Enable direnv hook if installed</td></tr>
+        <tr><td class="config-var">QOL_DEBUG</td><td class="config-default">0</td><td class="config-desc">Print debug messages during load (timing, PATH changes)</td></tr>
+      </tbody>
+    </table>
+
+    <div class="section-title" style="margin-top:2.5rem;">Example Configuration</div>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyCode(this)">copy</button>
+      <span class="hl-comment"># ~/.bashrc — place BEFORE the source line</span><br><br>
+      <span class="hl-comment"># I manage my own prompt with oh-my-posh</span><br>
+      <span class="hl">export</span> <span class="hl3">QOL_ENABLE_PROMPT</span>=<span class="hl-str">0</span><br><br>
+      <span class="hl-comment"># I prefer unguarded rm for speed</span><br>
+      <span class="hl">export</span> <span class="hl3">QOL_SAFE_ALIASES</span>=<span class="hl-str">0</span><br><br>
+      <span class="hl-comment"># I don't use Kubernetes</span><br>
+      <span class="hl">export</span> <span class="hl3">QOL_ENABLE_K8S</span>=<span class="hl-str">0</span><br><br>
+      <span class="hl-comment"># Suppress all missing-tool warnings</span><br>
+      <span class="hl">export</span> <span class="hl3">QOL_WARN_MISSING</span>=<span class="hl-str">0</span><br><br>
+      [ -f "$HOME/.config/qol/terminal-qol.bash" ] && \<br>
+      &nbsp;&nbsp;source "$HOME/.config/qol/terminal-qol.bash"
+    </div>
+  </div>
+
+  <!-- ===== TAB: DEPS ===== -->
+  <div class="tab-panel" id="tab-deps">
+    <div class="section-title">Dependency Matrix</div>
+    <p style="color:var(--muted); font-size:13px; margin-bottom:1.5rem;">
+      Every feature with an external dependency activates <em>only</em> when that tool is present.
+      Nothing fails — features simply degrade gracefully.
+    </p>
+
+    <div class="matrix">
+      <div class="matrix-row matrix-header">
+        <span>Feature</span>
+        <span>Requires</span>
+        <span>Description</span>
+        <span>Type</span>
+      </div>
+      <div class="matrix-row"><span class="matrix-feature">ls/ll/lt</span><span class="matrix-tool">eza or exa</span><span class="matrix-desc">Falls back to coreutils ls</span><span class="matrix-required req-optional">optional</span></div>
+      <div class="matrix-row"><span class="matrix-feature">cat</span><span class="matrix-tool">bat / batcat</span><span class="matrix-desc">Falls back to system cat</span><span class="matrix-required req-optional">optional</span></div>
+      <div class="matrix-row"><span class="matrix-feature">grep</span><span class="matrix-tool">rg (ripgrep)</span><span class="matrix-desc">Falls back to system grep</span><span class="matrix-required req-optional">optional</span></div>
+      <div class="matrix-row"><span class="matrix-feature">find</span><span class="matrix-tool">fd</span><span class="matrix-desc">Falls back to system find</span><span class="matrix-required req-optional">optional</span></div>
+      <div class="matrix-row"><span class="matrix-feature">diff</span><span class="matrix-tool">delta / colordiff</span><span class="matrix-desc">Falls back to system diff</span><span class="matrix-required req-optional">optional</span></div>
+      <div class="matrix-row"><span class="matrix-feature">extract</span><span class="matrix-tool">tar, unzip, etc.</span><span class="matrix-desc">Uses whatever's installed per format</span><span class="matrix-required req-builtin">built-in</span></div>
+      <div class="matrix-row"><span class="matrix-feature">serve</span><span class="matrix-tool">python3 / ruby / npx</span><span class="matrix-desc">Tries each in order</span><span class="matrix-required req-optional">optional</span></div>
+      <div class="matrix-row"><span class="matrix-feature">ports</span><span class="matrix-tool">ss / netstat / lsof</span><span class="matrix-desc">Tries each in order</span><span class="matrix-required req-optional">optional</span></div>
+      <div class="matrix-row"><span class="matrix-feature">port_kill</span><span class="matrix-tool">lsof or fuser</span><span class="matrix-desc">Requires one of these</span><span class="matrix-required req-optional">optional</span></div>
+      <div class="matrix-row"><span class="matrix-feature">jpp, jkeys, jlen</span><span class="matrix-tool">jq</span><span class="matrix-desc">Not available without jq</span><span class="matrix-required req-required">required</span></div>
+      <div class="matrix-row"><span class="matrix-feature">GET / POST</span><span class="matrix-tool">curl / wget / http</span><span class="matrix-desc">Falls back through chain</span><span class="matrix-required req-optional">optional</span></div>
+      <div class="matrix-row"><span class="matrix-feature">git aliases</span><span class="matrix-tool">git</span><span class="matrix-desc">All disabled without git</span><span class="matrix-required req-required">required</span></div>
+      <div class="matrix-row"><span class="matrix-feature">gbranch, dksh, kubens</span><span class="matrix-tool">fzf</span><span class="matrix-desc">Falls back to plain listing</span><span class="matrix-required req-optional">optional</span></div>
+      <div class="matrix-row"><span class="matrix-feature">fh, fcd, fkill, fenv</span><span class="matrix-tool">fzf</span><span class="matrix-desc">Not available without fzf</span><span class="matrix-required req-required">required</span></div>
+      <div class="matrix-row"><span class="matrix-feature">z / zi</span><span class="matrix-tool">zoxide</span><span class="matrix-desc">Not available without zoxide</span><span class="matrix-required req-required">required</span></div>
+      <div class="matrix-row"><span class="matrix-feature">direnv</span><span class="matrix-tool">direnv</span><span class="matrix-desc">Hook not installed without it</span><span class="matrix-required req-required">required</span></div>
+      <div class="matrix-row"><span class="matrix-feature">Starship prompt</span><span class="matrix-tool">starship</span><span class="matrix-desc">Falls back to minimal built-in prompt</span><span class="matrix-required req-optional">optional</span></div>
+      <div class="matrix-row"><span class="matrix-feature">Docker helpers</span><span class="matrix-tool">docker</span><span class="matrix-desc">Not available without docker</span><span class="matrix-required req-required">required</span></div>
+      <div class="matrix-row"><span class="matrix-feature">kubectl helpers</span><span class="matrix-tool">kubectl</span><span class="matrix-desc">Not available without kubectl</span><span class="matrix-required req-required">required</span></div>
+      <div class="matrix-row"><span class="matrix-feature">Node aliases</span><span class="matrix-tool">node / npm</span><span class="matrix-desc">pnpm aliases only if pnpm present</span><span class="matrix-required req-required">required</span></div>
+      <div class="matrix-row"><span class="matrix-feature">venv, pyrun</span><span class="matrix-tool">python3</span><span class="matrix-desc">Not available without python3</span><span class="matrix-required req-required">required</span></div>
+      <div class="matrix-row"><span class="matrix-feature">cargo aliases</span><span class="matrix-tool">cargo</span><span class="matrix-desc">Not available without cargo</span><span class="matrix-required req-required">required</span></div>
+      <div class="matrix-row"><span class="matrix-feature">manpager</span><span class="matrix-tool">bat / most</span><span class="matrix-desc">Falls back to default pager</span><span class="matrix-required req-optional">optional</span></div>
+    </div>
+
+    <div class="section-title" style="margin-top:2.5rem;">Recommended Modern CLI Stack</div>
+    <div class="code-block">
+      <button class="copy-btn" onclick="copyCode(this)">copy</button>
+      <span class="hl-comment"># macOS (Homebrew)</span><br>
+      brew install eza bat ripgrep fd fzf zoxide starship git-delta jq direnv<br><br>
+      <span class="hl-comment"># Ubuntu/Debian (mix of apt + cargo/binary)</span><br>
+      sudo apt install -y bat fd-find ripgrep fzf jq direnv<br>
+      cargo install eza zoxide git-delta<br>
+      curl -sS https://starship.rs/install.sh | sh<br><br>
+      <span class="hl-comment"># After installing fzf:</span><br>
+      $(brew --prefix)/opt/fzf/install --key-bindings --completion --no-update-rc
+    </div>
+  </div>
+
+  <!-- ===== TAB: DESIGN ===== -->
+  <div class="tab-panel" id="tab-design">
+    <div class="section-title">Design Choices</div>
+
+    <div class="note-card">
+      <h4>Idempotency via Guard Variable</h4>
+      <p>The <code>__QOL_LOADED</code> guard ensures re-sourcing the script (e.g. via <code>reload_shell</code>) doesn't duplicate PROMPT_COMMAND entries, PATH entries, or trap registrations. Functions are redefined on each source, which is harmless and expected.</p>
+    </div>
+
+    <div class="note-card blue">
+      <h4>Feature Detection, Not Feature Assumption</h4>
+      <p>Every external tool is gated behind <code>has_cmd</code>. The script never assumes a tool is present because it was present when the script was written. This makes it safe on minimal containers, fresh VMs, and developer machines alike.</p>
+    </div>
+
+    <div class="note-card orange">
+      <h4>One Warning Per Tool Per Session</h4>
+      <p>The <code>__QOL_WARNED</code> associative array tracks which warnings have fired. A missing tool emits one warning at source time, not every time you invoke something that needs it. This keeps shells usable without spamming every prompt.</p>
+    </div>
+
+    <div class="note-card">
+      <h4>No eval Except Shell Integrations</h4>
+      <p><code>eval</code> is used only for <code>starship init bash</code>, <code>zoxide init bash</code>, and <code>direnv hook bash</code> — these tools output Bash code designed to be eval'd. There is no user-data eval path. The <code>envload</code> function uses regex-validated assignment rather than eval to load .env files.</p>
+    </div>
+
+    <div class="note-card blue">
+      <h4>Safe .env Loading</h4>
+      <p><code>envload</code> parses .env files line-by-line using Bash regex, not <code>eval</code> or <code>source</code>. It validates that each line is of the form <code>VALID_KEY=value</code> before exporting, skips comments and blank lines, and strips surrounding quotes. Malformed lines are warned about, not silently dropped or executed.</p>
+    </div>
+
+    <div class="note-card orange">
+      <h4>Startup Performance</h4>
+      <p>The script uses only built-in Bash features for the core setup. External commands are called only when they're needed (detection via <code>command -v</code>, which is a shell builtin). Shell integrations like <code>eval "$(zoxide init bash)"</code> do incur a subprocess but only when those tools are present and enabled.</p>
+    </div>
+
+    <div class="note-card warn">
+      <h4>Portability Notes</h4>
+      <p>Some features require Bash 4+ (associative arrays, <code>globstar</code>, <code>autocd</code>). macOS ships with Bash 3.2 by default — users should install a modern Bash via Homebrew. The script degrades gracefully on Bash 3.2 but emits a version warning. The <code>EPOCHREALTIME</code> variable for load timing requires Bash 5+.</p>
+    </div>
+
+    <div class="note-card">
+      <h4>Namespacing Strategy</h4>
+      <p>Internal functions and variables are prefixed with <code>__qol_</code> or <code>__QOL_</code>. User-facing commands use short, memorable names. Feature-group state is stored in <code>__QOL_FEATURES</code> (an associative array) rather than a pile of separate variables, making <code>qol_doctor</code> easy to implement generically.</p>
+    </div>
+  </div>
+
+  <!-- ===== TAB: QUICKSTART ===== -->
+  <div class="tab-panel" id="tab-quickstart">
+    <div class="section-title">Quick Start Examples</div>
+
+    <div class="section-title" style="font-size:0.9rem; margin-top:1.5rem;">Daily Git Workflow</div>
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div>
+        <span class="terminal-title">git workflow</span>
+      </div>
+      <div class="terminal-body">
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">gs</span><span class="t-out">                        # git status -sb</span></span>
+        <span class="line"><span class="t-out">## main...origin/main [ahead 1]</span></span>
+        <span class="line"><span class="t-out"> M src/app.ts</span></span>
+        <span class="line"></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">gaa && gcm "feat: add retry logic"</span></span>
+        <span class="line"><span class="t-ok">[main 3f2a1b] feat: add retry logic</span></span>
+        <span class="line"></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">glog</span><span class="t-out">                      # pretty graph log</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">groot</span><span class="t-out">                     # jump to repo root</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">gbranch</span><span class="t-out">                   # fzf branch picker</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">gclean_merged</span><span class="t-out">             # delete merged branches</span></span>
+      </div>
+    </div>
+
+    <div class="section-title" style="font-size:0.9rem; margin-top:1.5rem;">Archive & Navigation</div>
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div>
+        <span class="terminal-title">files</span>
+      </div>
+      <div class="terminal-body">
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">extract release.tar.gz</span><span class="t-out">     # auto-detect format</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">mkcd my-project/src/components</span></span>
+        <span class="line"><span class="t-ok">Created: my-project/src/components</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">up 2</span><span class="t-out">                       # back to my-project/</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">lt</span><span class="t-out">                         # tree view (eza)</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">fcd</span><span class="t-out">                        # fuzzy-find a dir to cd into</span></span>
+      </div>
+    </div>
+
+    <div class="section-title" style="font-size:0.9rem; margin-top:1.5rem;">Development Server & Ports</div>
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div>
+        <span class="terminal-title">network</span>
+      </div>
+      <div class="terminal-body">
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">serve</span><span class="t-out">                      # HTTP server on :8080</span></span>
+        <span class="line"><span class="t-ok">[qol] Serving /home/user/project at http://localhost:8080</span></span>
+        <span class="line"></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">ports</span><span class="t-out">                      # what's listening?</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">port_kill 3000</span><span class="t-out">             # kill whatever's on 3000</span></span>
+        <span class="line"><span class="t-ok">[qol] Killing PIDs: 18432 (port 3000)</span></span>
+      </div>
+    </div>
+
+    <div class="section-title" style="font-size:0.9rem; margin-top:1.5rem;">Environment & Config</div>
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div>
+        <span class="terminal-title">env</span>
+      </div>
+      <div class="terminal-body">
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">envload .env.local</span></span>
+        <span class="line"><span class="t-ok">[qol] Loaded 12 variables from .env.local.</span></span>
+        <span class="line"></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">fenv DATABASE</span><span class="t-out">              # fuzzy search env for DATABASE</span></span>
+        <span class="line"><span class="t-out">DATABASE_URL=postgres://localhost:5432/mydb</span></span>
+        <span class="line"></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">path</span><span class="t-out">                       # print PATH one per line</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">path_add ~/bin</span><span class="t-out">             # safely add to PATH</span></span>
+      </div>
+    </div>
+
+    <div class="section-title" style="font-size:0.9rem; margin-top:1.5rem;">Python Virtualenv</div>
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div>
+        <span class="terminal-title">python</span>
+      </div>
+      <div class="terminal-body">
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">venv</span><span class="t-out">                       # create + activate .venv</span></span>
+        <span class="line"><span class="t-ok">[qol] Created virtualenv: .venv</span></span>
+        <span class="line"><span class="t-ok">[qol] Activated: .venv</span></span>
+        <span class="line"><span class="t-prompt">(.venv) $ </span><span class="t-cmd">pip install -r requirements.txt</span></span>
+        <span class="line"></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">pyrun '2 ** 32'</span></span>
+        <span class="line"><span class="t-out">4294967296</span></span>
+      </div>
+    </div>
+
+    <div class="section-title" style="font-size:0.9rem; margin-top:1.5rem;">Mistake Recovery</div>
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div>
+        <span class="terminal-title">oops</span>
+      </div>
+      <div class="terminal-body">
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">docker ps</span></span>
+        <span class="line"><span class="t-err">permission denied</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">please</span><span class="t-out">                     # sudo !!</span></span>
+        <span class="line"><span class="t-ok">CONTAINER ID  IMAGE  ...</span></span>
+        <span class="line"></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">gundo</span><span class="t-out">                      # unstage last commit</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">fkill</span><span class="t-out">                      # fuzzy kill any process</span></span>
+        <span class="line"><span class="t-prompt">$ </span><span class="t-cmd">fh vim</span><span class="t-out">                     # find past vim commands</span></span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  terminal-qol v1.0.0 &nbsp;·&nbsp; source from ~/.bashrc &nbsp;·&nbsp; MIT License
+</footer>
+
+<script>
+  function showTab(name) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+    event.target.classList.add('active');
+  }
+
+  function copyCode(btn) {
+    const block = btn.closest('.code-block');
+    const text = block.innerText.replace('copy\n', '').replace('\ncopied\n', '').trim();
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = 'copied';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1800);
+    });
+  }
+
+  // Animate ref items on scroll
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.style.opacity = '1';
+        e.target.style.transform = 'translateY(0)';
+      }
+    });
+  }, { threshold: 0.1 });
+
+  document.querySelectorAll('.ref-item, .step, .note-card, .matrix-row:not(.matrix-header)').forEach((el, i) => {
+    el.style.opacity = '0';
+    el.style.transform = 'translateY(8px)';
+    el.style.transition = `opacity 0.3s ease ${i * 0.02}s, transform 0.3s ease ${i * 0.02}s`;
+    observer.observe(el);
+  });
+</script>
+</body>
+</html>
