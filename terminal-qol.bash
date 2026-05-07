@@ -1428,7 +1428,7 @@ if [[ "${QOL_ENABLE_PROMPT}" == "1" ]]; then
         # supporting both string and array forms (Bash 5.1+ supports array).
         __qol_add_prompt_command() {
             local cmd="$1"
-            if declare -p PROMPT_COMMAND 2>/dev/null | command grep -q 'declare \-[^ ]*a'; then
+            if declare -p PROMPT_COMMAND 2>/dev/null | command grep -q 'declare -[^ ]*a'; then
                 # Array form
                 local existing
                 for existing in "${PROMPT_COMMAND[@]}"; do
